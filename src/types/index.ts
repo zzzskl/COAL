@@ -51,19 +51,20 @@ export interface Config {
   autoExecute: boolean;
 }
 
-/** 存档记录。指向 contexts[] 中某个索引 + 用户赋予的元信息。不是数据副本。 */
-export interface SavedEntry {
-  ctxIndex: number;
-  name: string;
-  savedAt: string;
-}
-
 /** 一个用户包含的全量数据。 */
 export interface User {
   version: 1;
   configs: Config[];
   activeCfg: number;
-  contexts: any[];   // Context.toJSON() 的输出 shape
+  contexts: any[];   // Context.toJSON() 的输出 shape（不含 name，name 在 ui.context）
   activeCtx: number;
-  saved: SavedEntry[];
+  /** 元信息——与 contexts[] 结构对应 */
+  meta: {
+    context: Record<number, { savedAt?: string }>;
+  };
+  /** UI 偏好——不污染核心数据模型，只属于 User 的元信息 */
+  ui: {
+    collapsed: Record<number, number[]>;  // ctxIndex → 需折叠的 messageIndex[]
+    context: Record<number, { name: string }>;  // ctxIndex → 用户赋予的对话名称
+  };
 }

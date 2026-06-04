@@ -3,13 +3,11 @@ import type { Message, Role, ToolCall, ToolDef, ToolChoice } from "../types/inde
 export type { Message, Role, ToolCall, ToolDef, ToolChoice };
 
 export class Context {
-  private _name: string;
   private _messages: Message[];
   private _tools: ToolDef[] | null;
   private _toolChoice: ToolChoice | null;
 
   constructor(systemPrompt?: string) {
-    this._name = "Unnamed";
     this._messages = [];
     this._tools = null;
     this._toolChoice = null;
@@ -17,9 +15,6 @@ export class Context {
       this.system(systemPrompt);
     }
   }
-
-  get name(): string { return this._name; }
-  setName(name: string): this { this._name = name; return this; }
 
   get messages(): ReadonlyArray<Message> {
     return this._messages;
@@ -135,9 +130,8 @@ export class Context {
     return this;
   }
 
-  toJSON(): { name: string; messages: Message[]; tools?: ToolDef[]; toolChoice?: ToolChoice } {
-    const result: { name: string; messages: Message[]; tools?: ToolDef[]; toolChoice?: ToolChoice } = {
-      name: this._name,
+  toJSON(): { messages: Message[]; tools?: ToolDef[]; toolChoice?: ToolChoice } {
+    const result: { messages: Message[]; tools?: ToolDef[]; toolChoice?: ToolChoice } = {
       messages: this._messages as Message[],
     };
     if (this._tools) result.tools = this._tools;
@@ -145,9 +139,8 @@ export class Context {
     return result;
   }
 
-  static fromJSON(json: { name?: string; messages: Message[]; tools?: ToolDef[]; toolChoice?: ToolChoice }): Context {
+  static fromJSON(json: { messages: Message[]; tools?: ToolDef[]; toolChoice?: ToolChoice }): Context {
     const ctx = new Context();
-    ctx._name = json.name ?? "Unnamed";
     ctx._messages = json.messages;
     if (json.tools) ctx._tools = json.tools;
     if (json.toolChoice) ctx._toolChoice = json.toolChoice;

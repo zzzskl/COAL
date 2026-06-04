@@ -14,11 +14,47 @@ export function initLogs() {
       const res = await fetch("/api/logs", { headers: window.COAL.headers() });
       const data = await res.json();
       logsList.innerHTML = "";
-      for (const entry of data.entries.slice(-30).reverse()) {
-        const div = document.createElement("div");
-        div.className = `log-entry log-${entry.level}`;
-        div.textContent = `${entry.time.slice(11, 19)} ${entry.level.toUpperCase()} ${entry.message}`;
-        logsList.appendChild(div);
+
+      // Separate interaction logs from system logs
+      const all = (data.entries || []).slice(-60);
+      const chatLogs = all.filter(e => e.tag === "chat");
+      const sysLogs = all.filter(e => e.tag !== "chat");
+
+      // Chat Activity section
+      if (chatLogs.length > 0) {
+        const hdr = document.createElement("div");
+        hdr.className = "log-section-hdr";
+        hdr.textContent = `Chat Activity (${chatLogs.length})`;
+        logsList.appendChild(hdr);
+
+        for (const entry of chatLogs.slice(-20).reverse()) {
+          const div = document.createElement("div");
+          div.className = "log-entry log-interaction";
+          div.textContent = `${entry.time.slice(11, 19)} ${entry.message}`;
+          logsList.appendChild(div);
+        }
+      }
+
+      // System Logs section
+      const sysHdr = document.createElement("div");
+      sysHdr.className = "log-section-hdr";
+      sysHdr.textContent = `System Logs (${sysLogs.length})`;
+      logsList.appendChild(sysHdr);
+
+      if (sysLogs.length > 0) {
+        for (const entry of sysLogs.slice(-30).reverse()) {
+          const div = document.createElement("div");
+          div.className = `log-entry log-${entry.level}`;
+          div.textContent = `${entry.time.slice(11, 19)} ${entry.level.toUpperCase()} ${entry.message}`;
+          logsList.appendChild(div);
+        }
+      } else {
+        const empty = document.createElement("div");
+        empty.className = "log-entry";
+        empty.style.color = "var(--c-text-dim)";
+        empty.style.fontSize = "11px";
+        empty.textContent = "(no system logs)";
+        logsList.appendChild(empty);
       }
     } catch {}
   }
@@ -47,7 +83,7 @@ export function initLogs() {
       : '<div class="snap-line">(none)</div>';
 
     const logLines = logs.slice(-30).reverse().map(e =>
-      `<div class="snap-line snap-log-${e.level}"><span class="snap-idx">${e.time.slice(11, 19)}</span> ${e.level.toUpperCase()} ${esc(e.message)}</div>`
+      `<div class="snap-line snap-log-${e.level}"><span class="snap-idx">${e.time.slice(11, 19)}</span> ${e.tag ? `[${esc(e.tag)}] ` : ""}${esc(e.message)}</div>`
     ).join("");
 
     container.style.display = "block";

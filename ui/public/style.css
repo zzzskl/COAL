@@ -496,6 +496,19 @@ body.sidebar-open #sidebar-overlay {
 .log-entry-error { color: var(--c-danger); }
 .log-entry-warn { color: var(--c-warn); }
 .log-entry-info { color: var(--clr-text-dim); }
+
+.log-section-hdr {
+  font-size: 11px; font-weight: 600;
+  color: var(--c-accent); padding: 6px 4px 3px;
+  border-bottom: 1px solid var(--c-border);
+  margin-top: 4px;
+}
+.log-interaction {
+  color: var(--c-text);
+  background: rgba(100, 200, 255, 0.04);
+  border-left: 2px solid var(--c-accent);
+  padding: 2px 6px !important;
+}
 #ctx-load-btn:hover {
   background: #1a5080;
 }
@@ -1141,34 +1154,4 @@ body.sidebar-open #sidebar-overlay {
   }
 }
 
-/* ========================================
-   Responsive: Desktop (≥ 1024px)
-   ======================================== */
-@media (min-width: 1024px) {
-  #sidebar {
-    position: static;
-    width: var(--sidebar-width);
-    min-width: var(--sidebar-width);
-    height: auto;
-    transform: none;
-    transition: none;
-    border-right: 1px solid var(--clr-border);
-  }
-
-  #sidebar-overlay {
-    display: none !important;
-  }
-
-  body:not(.sidebar-open) #sidebar {
-    /* on desktop, sidebar is always visible */
-    transform: none;
-  }
-
-  #sidebar-toggle {
-    display: none;
-  }
-
-  .app-body {
-    flex-direction: row;
-  }
-}
+/* Sidebar is always slide-in (all screen sizes) */

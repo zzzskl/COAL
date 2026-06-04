@@ -15,11 +15,24 @@ const state = {
   activeCfg: 0,
   contexts: [],
   activeCtx: 0,
+  meta: { context: {} },
+  ui: { collapsed: {}, context: {} },
 };
 
 // UI refs
 let messageList = null;
 let sidebarOpen = false;
+
+// Expose app state to sidebar modules (sb-context.js etc.)
+window.__COAL_APP__ = {
+  state,
+  getActiveConfig: () => state.configs[state.activeCfg],
+  getActiveContext: () => state.contexts[state.activeCtx],
+  getActiveMessages: () => state.contexts[state.activeCtx]?.messages ?? [],
+  api,
+  syncConfigs,
+  syncContexts,
+};
 
 // ══ HTTP helper ═══════════════════════════════════════════
 window.COAL = {
@@ -172,7 +185,7 @@ function initContextSwitcher() {
   state.contexts.forEach((c, i) => {
     const opt = document.createElement("option");
     opt.value = i;
-    opt.textContent = c.name || `Chat ${i + 1}`;
+    opt.textContent = state.ui?.context?.[i]?.name ?? `Chat ${i + 1}`;
     if (i === state.activeCtx) opt.selected = true;
     sel.appendChild(opt);
   });
@@ -245,6 +258,21 @@ function initMessageList() {
     placeholder: "Type a message and press Enter...",
     onSubmit: handleSend,
     onClear: handleClear,
+    collapsedIndices: () => state.ui.collapsed?.[state.activeCtx] ?? [],
+    onEditMessage: (index, data) => {
+      if (data === null) { refreshMessageList(); return; } // cancel
+      const ctx = getActiveContext();
+      if (!ctx) return;
+      Object.assign(ctx.messages[index], data);
+      syncContexts();
+    },
+    onDeleteMessage: (index) => {
+      const ctx = getActiveContext();
+      if (!ctx) return;
+      ctx.messages.splice(index, 1);
+      syncContexts();
+    },
+    onBranchMessage: handleMessageBranch,
   });
   container.appendChild(messageList.el);
 }
@@ -265,6 +293,8 @@ async function handleSend(content) {
       thinking: cfg.thinking ?? "disabled",
       autoExecute: cfg.autoExecute ?? false,
     };
+    // Empty message → ask() without new user message (regenerate/continue)
+    if (!content) delete body.message;
 
     const result = await api("POST", "/api/chat", body);
     await refreshAll();
@@ -291,25 +321,52 @@ async function handleClear() {
   }
 }
 
+async function handleMessageBranch(index) {
+  const ctx = getActiveContext();
+  if (!ctx) return;
+  const newCtx = {
+    ...ctx,
+    messages: ctx.messages.slice(0, index + 1),
+  };
+  state.contexts.push(newCtx);
+  state.activeCtx = state.contexts.length - 1;
+  // Set default name in ui.context
+  const idx = state.contexts.length - 1;
+  if (!state.ui.context) state.ui.context = {};
+  state.ui.context[idx] = { name: `Chat ${idx + 1}` };
+  await syncContexts();
+  refreshAll();
+}
+
 function refreshMessageList() {
   messageList?.refresh();
   initContextSwitcher();
+  window.__COAL_APP__?.refreshSidebar?.();
 }
 
 // ══ Sidebar ══════════════════════════════════════════════
+let sidebarEl = null;
+
 function initSidebar() {
-  document.getElementById("sidebar-toggle").addEventListener("click", toggleSidebar);
+  document.getElementById("sidebar-toggle").addEventListener("click", () => openSidebar("context"));
+  document.getElementById("ctx-builder-btn").addEventListener("click", () => openSidebar("context"));
+  document.getElementById("exec-btn").addEventListener("click", () => openSidebar("executor"));
+  document.getElementById("logs-btn").addEventListener("click", () => openSidebar("logs"));
   document.getElementById("sidebar-overlay").addEventListener("click", closeSidebar);
 
   const appBody = document.querySelector(".app-body");
   if (appBody) {
-    appBody.insertBefore(Sidebar(refreshAll), appBody.firstChild);
+    sidebarEl = Sidebar(refreshAll);
+    appBody.insertBefore(sidebarEl, appBody.firstChild);
   }
 }
 
-function toggleSidebar() {
-  sidebarOpen = !sidebarOpen;
-  document.body.classList.toggle("sidebar-open", sidebarOpen);
+function openSidebar(section) {
+  sidebarOpen = true;
+  document.body.classList.add("sidebar-open");
+  if (sidebarEl && sidebarEl.activateSection) {
+    sidebarEl.activateSection(section);
+  }
 }
 
 function closeSidebar() {
@@ -412,20 +469,23 @@ async function syncContexts() {
 // ══ Refresh ══════════════════════════════════════════════
 async function refreshAll() {
   try {
-    const [cfgRes, ctxRes] = await Promise.all([
+    const [cfgRes, ctxRes, uiRes] = await Promise.all([
       api("GET", "/api/configs"),
       api("GET", "/api/contexts"),
+      api("GET", "/api/ui").catch(() => ({ collapsed: {} })),
     ]);
 
     state.configs = cfgRes.configs;
     state.activeCfg = cfgRes.activeCfg;
     state.contexts = ctxRes.contexts;
     state.activeCtx = ctxRes.activeCtx;
+    state.ui = uiRes;
 
     renderConfigCompact();
     initContextSwitcher();
     refreshMessageList();
     refreshToolsBadge();
+    window.__COAL_APP__?.refreshSidebar?.();
   } catch (err) {
     console.error("refreshAll failed:", err);
   }

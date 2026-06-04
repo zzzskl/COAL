@@ -135,7 +135,7 @@ export class Model {
     if (tools) body.tools = tools;
     if (toolChoice) body.tool_choice = toolChoice;
 
-    logger.info(`ask() → ${this.modelName}`, {
+    logger.interaction(`ask() → ${this.modelName}`, {
       msgCount: messages.length,
       temperature: this.temp,
       maxTokens: this.maxTok,
@@ -165,7 +165,7 @@ export class Model {
     const msg = data.choices[0].message;
     const elapsed = Date.now() - startTime;
 
-    logger.info(`ask() ← ${elapsed}ms`, {
+    logger.interaction(`ask() ← ${elapsed}ms`, {
       hasContent: msg.content !== null,
       contentLen: msg.content?.length ?? 0,
       toolCalls: msg.tool_calls?.map((t) => t.function.name),

@@ -4,7 +4,7 @@ import { resolve, dirname } from "node:path";
 import { Model } from "../src/model/index.js";
 import { Context } from "../src/context/index.js";
 import type { ToolDef, ToolChoice } from "../src/context/index.js";
-import type { User, Config, SavedEntry } from "../src/types/index.js";
+import type { User, Config } from "../src/types/index.js";
 import { logger } from "../src/logger/index.js";
 import { executePendingTools } from "../src/executor/index.js";
 import { registry, getBuiltinToolDefs } from "../src/tools/index.js";
@@ -59,7 +59,6 @@ function createDefaultUser(): { userData: User; contexts: Context[] } {
     autoExecute: false,
   };
   const defaultCtx = new Context();
-  defaultCtx.setName("Chat 1");
 
   const userData: User = {
     version: 1,
@@ -67,7 +66,8 @@ function createDefaultUser(): { userData: User; contexts: Context[] } {
     activeCfg: 0,
     contexts: [defaultCtx.toJSON()],
     activeCtx: 0,
-    saved: [],
+    meta: { context: {} },
+    ui: { collapsed: {}, context: { 0: { name: "Chat 1" } } },
   };
   return { userData, contexts: [defaultCtx] };
 }
@@ -100,6 +100,18 @@ function loadUser(userName: string): UserEntry {
 
   const raw = readUserData(userName);
   if (raw) {
+    // Backward compat: ensure meta and ui fields
+    const r = raw as any;
+    if (!r.meta) r.meta = { context: {} };
+    if (!r.ui) r.ui = { collapsed: {}, context: {} };
+    if (!r.ui.context) r.ui.context = {};
+    // Migrate old ctx.name → ui.context[i].name
+    for (let i = 0; i < r.contexts.length; i++) {
+      if (r.contexts[i]?.name && !r.ui.context[i]) {
+        r.ui.context[i] = { name: r.contexts[i].name };
+      }
+      delete r.contexts[i]?.name;  // strip old name from context data
+    }
     const entry: UserEntry = {
       userData: raw,
       contexts: raw.contexts.map((c: any) => Context.fromJSON(c)),
@@ -163,36 +175,33 @@ app.put("/api/contexts", resolveUser, (req, res) => {
   });
 });
 
-// ══ Saved API ═══════════════════════════════════════════════
+// ══ Context Name API ═══════════════════════════════════════
 
-app.get("/api/saved", resolveUser, (req, res) => {
-  const { userData } = (req as any).user as UserEntry;
-  res.json({ saved: userData.saved });
-});
-
-app.post("/api/saved/save", resolveUser, (req, res) => {
+app.put("/api/context/name", resolveUser, (req, res) => {
   const entry = (req as any).user as UserEntry;
   const { name } = req.body as { name?: string };
-  if (!name) { res.status(400).json({ error: "name is required" }); return; }
-
-  const ctxIndex = entry.userData.activeCtx;
-  entry.userData.saved.push({ ctxIndex, name, savedAt: new Date().toISOString() });
+  const idx = entry.userData.activeCtx;
+  if (!entry.userData.ui.context) entry.userData.ui.context = {};
+  entry.userData.ui.context[idx] = { name: name ?? `Chat ${idx + 1}` };
   writeUserData((req as any).userName, entry.userData, entry.contexts);
-  res.json({ saved: entry.userData.saved });
+  res.json({ name: entry.userData.ui.context[idx].name });
 });
 
-app.post("/api/saved/load", resolveUser, (req, res) => {
+// ══ UI Preferences API ══════════════════════════════════════
+
+app.get("/api/ui", resolveUser, (req, res) => {
+  const { userData } = (req as any).user as UserEntry;
+  res.json(userData.ui ?? { collapsed: {}, context: {} });
+});
+
+app.put("/api/ui", resolveUser, (req, res) => {
   const entry = (req as any).user as UserEntry;
-  const { ctxIndex } = req.body as { ctxIndex?: number };
-  if (ctxIndex === undefined || ctxIndex < 0 || ctxIndex >= entry.contexts.length) {
-    res.status(400).json({ error: "invalid ctxIndex" }); return;
-  }
-  entry.userData.activeCtx = ctxIndex;
+  const { collapsed, context: ctxNames } = req.body as { collapsed?: Record<number, number[]>; context?: Record<number, { name: string }> };
+  if (!entry.userData.ui) entry.userData.ui = { collapsed: {}, context: {} };
+  if (collapsed !== undefined) entry.userData.ui.collapsed = collapsed;
+  if (ctxNames !== undefined) entry.userData.ui.context = ctxNames;
   writeUserData((req as any).userName, entry.userData, entry.contexts);
-  res.json({
-    contexts: entry.contexts.map(c => c.toJSON()),
-    activeCtx: entry.userData.activeCtx,
-  });
+  res.json(entry.userData.ui);
 });
 
 // ══ Chat ════════════════════════════════════════════════════
@@ -221,7 +230,7 @@ app.post("/api/chat", resolveUser, async (req, res) => {
     if (tools !== undefined) ctx.setTools(tools);
     if (toolChoice !== undefined) ctx.setToolChoice(toolChoice);
 
-    logger.info(`chat: ctx has ${ctx.messages.length} messages before ask`);
+    logger.interaction(`chat: ctx has ${ctx.messages.length} messages before ask`);
 
     function makeModel() {
       const m = new Model().context(ctx);
@@ -242,7 +251,7 @@ app.post("/api/chat", resolveUser, async (req, res) => {
 
     let currentResult = await makeModel().ask(message);
 
-    logger.info(`chat: reply received`, {
+    logger.interaction(`chat: reply received`, {
       contentLen: currentResult.content?.length ?? 0,
       hasToolCalls: (currentResult.tool_calls?.length ?? 0) > 0,
       ctxSize: ctx.messages.length,
@@ -255,7 +264,7 @@ app.post("/api/chat", resolveUser, async (req, res) => {
         const executed = executePendingTools(ctx, registry as any);
         if (executed.length === 0) break;
         totalExecuted += executed.length;
-        logger.info(`auto-exec round ${round + 1}: ${executed.length} tool(s)`, {
+        logger.interaction(`auto-exec round ${round + 1}: ${executed.length} tool(s)`, {
           executed,
           ctxSize: ctx.messages.length,
         });
@@ -264,7 +273,7 @@ app.post("/api/chat", resolveUser, async (req, res) => {
         if (!currentResult.tool_calls?.length) break;
       }
       if (totalExecuted > 0) {
-        logger.info(`auto-exec done: ${totalExecuted} total tool(s) executed`);
+        logger.interaction(`auto-exec done: ${totalExecuted} total tool(s) executed`);
       }
     }
 
@@ -318,7 +327,6 @@ app.delete("/api/context", resolveUser, (req, res) => {
   const userName: string = (req as any).userName;
   const ctx = entry.contexts[entry.userData.activeCtx];
   ctx.clear();
-  ctx.setName("Chat 1");
   writeUserData(userName, entry.userData, entry.contexts);
   res.json(ctx.toJSON());
 });
@@ -410,7 +418,7 @@ app.post("/api/context/execute", resolveUser, (req, res) => {
   const userName: string = (req as any).userName;
   const ctx = entry.contexts[entry.userData.activeCtx];
   const executed = executePendingTools(ctx, registry as any);
-  logger.info(`executor ran: ${executed.length} tool(s) executed`, {
+  logger.interaction(`executor ran: ${executed.length} tool(s) executed`, {
     executed,
     ctxSize: ctx.messages.length,
   });
@@ -418,63 +426,11 @@ app.post("/api/context/execute", resolveUser, (req, res) => {
   res.json({ executed, ...ctx.toJSON() } as any);
 });
 
-// ══ Backward-compat: Context save/load/list ═════════════════
+// ══ [removed: Context save/load/list] ════════════════════════
 
-app.get("/api/context/list", resolveUser, (req, res) => {
-  const entry = (req as any).user as UserEntry;
-  res.json({
-    files: entry.userData.saved.map(s => ({
-      id: s.ctxIndex,
-      name: s.name,
-      msgCount: entry.contexts[s.ctxIndex]?.messages.length ?? 0,
-    })),
-  });
-});
 
-app.post("/api/context/save", resolveUser, (req, res) => {
-  const entry = (req as any).user as UserEntry;
-  const userName: string = (req as any).userName;
-  const { filename } = req.body as { filename?: string };
-  if (!filename) { res.status(400).json({ error: "filename is required" }); return; }
 
-  const ctxIndex = entry.userData.activeCtx;
-  entry.userData.saved.push({
-    ctxIndex,
-    name: filename,
-    savedAt: new Date().toISOString(),
-  });
-  writeUserData(userName, entry.userData, entry.contexts);
-  res.json({ saved: filename, messages: entry.contexts[ctxIndex].messages.length });
-});
 
-app.post("/api/context/load", resolveUser, (req, res) => {
-  const entry = (req as any).user as UserEntry;
-  const userName: string = (req as any).userName;
-  const { filename } = req.body as { filename?: string };
-  if (!filename) { res.status(400).json({ error: "filename is required" }); return; }
-
-  const savedIdx = entry.userData.saved.findIndex(s => s.name === filename);
-  if (savedIdx === -1) { res.status(404).json({ error: "file not found" }); return; }
-
-  const targetCtxIndex = entry.userData.saved[savedIdx].ctxIndex;
-  if (targetCtxIndex >= 0 && targetCtxIndex < entry.contexts.length) {
-    entry.userData.activeCtx = targetCtxIndex;
-  }
-  writeUserData(userName, entry.userData, entry.contexts);
-  const ctx = entry.contexts[entry.userData.activeCtx];
-  res.json({ loaded: filename, ...ctx.toJSON() } as any);
-});
-
-app.delete("/api/context/file/:filename", resolveUser, (req, res) => {
-  const entry = (req as any).user as UserEntry;
-  const userName: string = (req as any).userName;
-  const { filename } = req.params;
-  const idx = entry.userData.saved.findIndex(s => s.name === filename);
-  if (idx === -1) { res.status(404).json({ error: "file not found" }); return; }
-  entry.userData.saved.splice(idx, 1);
-  writeUserData(userName, entry.userData, entry.contexts);
-  res.json({ deleted: filename });
-});
 
 // ══ Backward-compat: User info ══════════════════════════════
 
@@ -560,7 +516,6 @@ function migrateIfNeeded(user: string): boolean {
   }
 
   const ctx = new Context();
-  ctx.setName("Chat 1");
   if (oldCtx.messages) {
     for (const m of oldCtx.messages) {
       ctx.add(m.role, m.content ?? "", {
@@ -583,19 +538,9 @@ function migrateIfNeeded(user: string): boolean {
     autoExecute: oldConfig.autoExecute ?? false,
   };
 
-  const saved: SavedEntry[] = [];
-  if (existsSync(savedDir)) {
-    try {
-      const files = readdirSync(savedDir).filter(f => f.endsWith(".json"));
-      for (let i = 0; i < files.length; i++) {
-        saved.push({
-          ctxIndex: 0,  // point to the only context
-          name: files[i].replace(/\.json$/, ""),
-          savedAt: new Date().toISOString(),
-        });
-      }
-    } catch {}
-  }
+  // Migrate old saved entries to meta/context names
+  const savedCtxName = oldCtx.name || "Chat 1";
+  const hasSaved = existsSync(savedDir) && readdirSync(savedDir).length > 0;
 
   const userData: User = {
     version: 1,
@@ -603,7 +548,8 @@ function migrateIfNeeded(user: string): boolean {
     activeCfg: 0,
     contexts: [ctx.toJSON()],
     activeCtx: 0,
-    saved,
+    meta: { context: hasSaved ? { 0: { savedAt: new Date().toISOString() } } : {} },
+    ui: { collapsed: {}, context: { 0: { name: savedCtxName } } },
   };
 
   writeUserData(user, userData, [ctx]);

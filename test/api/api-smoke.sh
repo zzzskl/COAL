@@ -78,26 +78,14 @@ curl -sf -X POST "$BASE/api/context/message" -H "$H" -H "$CT" \
 RES=$(curl -sf -X POST "$BASE/api/chat" -H "$H" -H "$CT" -d '{}')
 check "POST /api/chat returns reply" "reply" "$RES"
 
-# ── 4. Context persistence ────────────────────────────────────────
-echo "── 4. Context persistence ──"
+# ── 4. Context name ──────────────────────────────────────────────
+echo "── 4. Context name ──"
 
-# 4a. Save current context
-RES=$(curl -sf -X POST "$BASE/api/context/save" -H "$H" -H "$CT" \
-  -d '{"filename":"test-smoke"}')
-check "POST /api/context/save" "test-smoke.json" "$RES"
-
-# 4b. List saved contexts
-RES=$(curl -sf "$BASE/api/context/list" -H "$H")
-check "GET /api/context/list includes saved" "test-smoke" "$RES"
-
-# 4c. Load saved context
-RES=$(curl -sf -X POST "$BASE/api/context/load" -H "$H" -H "$CT" \
-  -d '{"filename":"test-smoke"}')
-check "POST /api/context/load" "test-smoke.json" "$RES"
-
-# 4d. Delete saved context
-RES=$(curl -sf -X DELETE "$BASE/api/context/file/test-smoke" -H "$H")
-check "DELETE /api/context/file/:filename" "test-smoke.json" "$RES"
+# 4a. Set context name
+RES=$(curl -sf -X PUT "$BASE/api/context/name" -H "$H" -H "$CT" \
+  -d '{"name":"My Chat"}')
+check "PUT /api/context/name sets name" '"name"' "$RES"
+check "PUT /api/context/name value" "My Chat" "$RES"
 
 # ── 5. Tools ──────────────────────────────────────────────────────
 echo "── 5. Tools ──"
@@ -111,16 +99,34 @@ RES=$(curl -sf -X PUT "$BASE/api/context/tools" -H "$H" -H "$CT" \
   -d '{"tools":[{"type":"function","function":{"name":"echo","description":"Echo back the input","parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}}]}')
 check "PUT /api/context/tools sets tools" "echo" "$RES"
 
-# ── 6. Debug ──────────────────────────────────────────────────────
-echo "── 6. Debug ──"
+# ── 7. UI Preferences ─────────────────────────────────────────────
+echo "── 7. UI Preferences (new) ──"
+
+# 7a. GET default ui
+UI=$(curl -sf "$BASE/api/ui" -H "$H")
+check "GET /api/ui returns collapsed" "collapsed" "$UI"
+check "GET /api/ui returns context" '"context"' "$UI"
+
+# 7b. PUT collapsed state
+UI2=$(curl -sf -X PUT "$BASE/api/ui" -H "$H" -H "$CT" \
+  -d '{"collapsed":{"0":[0,2]}}')
+check "PUT /api/ui sets collapsed" '"0"' "$UI2"
+check "PUT /api/ui contains indices" '[0,2]' "$UI2"
+
+# 7c. Verify persisted
+UI3=$(curl -sf "$BASE/api/ui" -H "$H")
+check "GET /api/ui reflects update" '[0,2]' "$UI3"
+
+# ── 8. Debug ──────────────────────────────────────────────────────
+echo "── 8. Debug ──"
 
 RES=$(curl -sf "$BASE/api/debug" -H "$H")
 check "GET /api/debug returns sessionId" "sessionId" "$RES"
 check "GET /api/debug returns context" "context" "$RES"
 check "GET /api/debug returns config" "config" "$RES"
 
-# ── 7. Logs ───────────────────────────────────────────────────────
-echo "── 7. Logs ──"
+# ── 9. Logs ───────────────────────────────────────────────────────
+echo "── 9. Logs ──"
 
 RES=$(curl -sf "$BASE/api/logs")
 check "GET /api/logs returns entries" "entries" "$RES"
