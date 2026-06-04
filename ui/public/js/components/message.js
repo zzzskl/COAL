@@ -77,7 +77,7 @@ function makeErrorEl(msg) {
 
 // ── MessageList ─────────────────────────────────────────────
 
-export function MessageList(messages, { placeholder, onSubmit, onClear } = {}) {
+export function MessageList(getMessages, { placeholder, onSubmit, onClear } = {}) {
   const el = document.createElement("div");
   el.className = "msg-list-root";
   el.style.display = "flex";
@@ -97,7 +97,8 @@ export function MessageList(messages, { placeholder, onSubmit, onClear } = {}) {
   msgCountSpan.className = "msg-list-count";
   msgCountSpan.style.fontSize = "12px";
   msgCountSpan.style.color = "var(--c-text-dim)";
-  msgCountSpan.textContent = `${messages.length} messages`;
+  const initialMsgs = typeof getMessages === "function" ? getMessages() : getMessages;
+  msgCountSpan.textContent = `${initialMsgs.length} messages`;
   ctrlRow.appendChild(msgCountSpan);
 
   if (onClear) {
@@ -127,6 +128,8 @@ export function MessageList(messages, { placeholder, onSubmit, onClear } = {}) {
   if (onSubmit) el.appendChild(inputRow);
 
   function renderMessages() {
+    const msgs = typeof getMessages === "function" ? getMessages() : getMessages;
+
     // Remove loading and error indicators (non-message elements)
     const toRemove = scrollArea.querySelectorAll(".msg-list-error");
     for (const r of toRemove) r.remove();
@@ -135,18 +138,18 @@ export function MessageList(messages, { placeholder, onSubmit, onClear } = {}) {
     for (const m of existingMsgs) m.remove();
 
     // Re-render all messages
-    if (!messages || messages.length === 0) {
+    if (!msgs || msgs.length === 0) {
       const empty = document.createElement("div");
       empty.className = "msg-list-empty";
       empty.textContent = "No messages yet";
       scrollArea.appendChild(empty);
     } else {
-      for (const m of messages) {
+      for (const m of msgs) {
         scrollArea.appendChild(MessageDetail(m));
       }
     }
     scrollArea.scrollTop = scrollArea.scrollHeight;
-    msgCountSpan.textContent = `${messages.length} messages`;
+    msgCountSpan.textContent = `${msgs.length} messages`;
   }
 
   renderMessages();

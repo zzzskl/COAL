@@ -39,15 +39,16 @@ export interface CoalConfig {
   defaults: DefaultsConfig;
 }
 
-function resolveEnv(value: string): string {
-  return value.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
-}
+const config: CoalConfig = {
+  api: {
+    baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1/chat/completions",
+    apiKey: process.env.DEEPSEEK_API_KEY ?? "",
+  },
+  defaults: {
+    model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash",
+    temperature: parseFloat(process.env.DEEPSEEK_TEMPERATURE ?? "0.7"),
+    maxTokens: parseInt(process.env.DEEPSEEK_MAX_TOKENS ?? "4096", 10),
+  },
+};
 
-function loadConfig(): CoalConfig {
-  const configPath = resolve(process.cwd(), "coal.config.json");
-  const raw = readFileSync(configPath, "utf-8");
-  const resolved = resolveEnv(raw);
-  return JSON.parse(resolved) as CoalConfig;
-}
-
-export const config: CoalConfig = loadConfig();
+export { config };

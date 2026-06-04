@@ -1,0 +1,67 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是一个助手，可以调用 get_weather 工具查询天气。用中文回复。"
+    },
+    {
+      "role": "user",
+      "content": "今天北京和上海的天气怎么样？"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_bj_001",
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\": \"北京\"}"
+          }
+        },
+        {
+          "id": "call_sh_002",
+          "type": "function",
+          "function": {
+            "name": "get_weather",
+            "arguments": "{\"city\": \"上海\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "晴，25°C，湿度 40%，风力 3 级",
+      "tool_call_id": "call_bj_001"
+    },
+    {
+      "role": "tool",
+      "content": "多云转小雨，22°C，湿度 75%，风力 2 级",
+      "tool_call_id": "call_sh_002"
+    },
+    {
+      "role": "assistant",
+      "content": "北京今天晴天，25°C，湿度 40%，适合户外活动。上海多云转小雨，22°C，湿度较高，建议带伞。"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get weather of a location, the user should supply a location first.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "The city name, e.g. 北京"
+            }
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ]
+}

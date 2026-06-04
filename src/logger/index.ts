@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 
 type Level = "debug" | "info" | "warn" | "error";
@@ -13,30 +13,7 @@ interface LogEntry {
 class Logger {
   private entries: LogEntry[] = [];
   private maxEntries = 200;
-  private _filePath: string | null = null;
-  private resolved = false;
-
-  private get filePath(): string {
-    if (!this.resolved) {
-      this.resolved = true;
-      this._filePath = this.resolvePath();
-    }
-    return this._filePath ?? resolve(process.cwd(), "coal.log");
-  }
-
-  private resolvePath(): string {
-    try {
-      const configPath = resolve(process.cwd(), "coal.config.json");
-      const raw = readFileSync(configPath, "utf-8");
-      const config = JSON.parse(raw);
-      if (config.logFile) {
-        return resolve(process.cwd(), config.logFile);
-      }
-    } catch {
-      // config not found, use default
-    }
-    return resolve(process.cwd(), "coal.log");
-  }
+  private readonly filePath = resolve(process.cwd(), "data", "coal.log");
 
   private format(level: Level, message: string, data?: unknown): LogEntry {
     return {

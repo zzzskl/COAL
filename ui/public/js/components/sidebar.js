@@ -1,6 +1,8 @@
 // Sidebar component — tools, context builder, executor, logs
-
-function esc(s) { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; }
+import { initTools } from "./sb-tools.js";
+import { initContextBuilder } from "./sb-context.js";
+import { initExecutor } from "./sb-executor.js";
+import { initLogs } from "./sb-logs.js";
 
 export function Sidebar(refreshAll) {
   const el = document.createElement("div");
@@ -89,37 +91,13 @@ export function Sidebar(refreshAll) {
     });
   });
 
-  // Defer init of old modules to next tick so DOM is ready
+  // Defer section init to next tick so DOM is ready
   setTimeout(() => {
-    initToolsSection();
-    initContextSection(refreshAll);
-    initExecutorSection(refreshAll);
-    initLogsSection();
+    initTools();
+    initContextBuilder(refreshAll);
+    initExecutor(refreshAll);
+    initLogs();
   }, 0);
 
   return el;
-}
-
-// ══ Tools ═══════════════════════════════════════════════════
-function initToolsSection() {
-  import("../tools.js").then(m => m.initTools?.()).catch(err => {
-    console.warn("Tools init failed:", err);
-    const list = document.getElementById("tools-list");
-    if (list) list.innerHTML = `<div class="exec-err" style="padding:6px;font-size:12px">${esc(err.message)}</div>`;
-  });
-}
-
-// ══ Context Builder ═══════════════════════════════════════
-function initContextSection(refreshAll) {
-  import("../context.js").then(m => m.initContextBuilder?.(refreshAll)).catch(() => {});
-}
-
-// ══ Executor ══════════════════════════════════════════════
-function initExecutorSection(refreshAll) {
-  import("../executor.js").then(m => m.initExecutor?.(refreshAll)).catch(() => {});
-}
-
-// ══ Logs ══════════════════════════════════════════════════
-function initLogsSection() {
-  import("../logs.js").then(m => m.initLogs?.()).catch(() => {});
 }
