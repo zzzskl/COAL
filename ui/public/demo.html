@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COAL Component Demo</title>
+  <link rel="stylesheet" href="/css/components.css">
+</head>
+<body class="demo-page">
+
+<h1 class="demo-title">COAL Component Library</h1>
+<p class="demo-subtitle">Config · Context · Message · ToolDef &mdash; each in Compact / Detail / List variants</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- CONFIG                                                      -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="demo-section">
+  <div class="demo-section-title">Config</div>
+  <div class="demo-grid">
+    <div class="demo-grid-left" id="cfg-list-container"></div>
+    <div class="demo-grid-right" id="cfg-detail-container"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- CONTEXT                                                     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="demo-section">
+  <div class="demo-section-title">Context</div>
+  <div class="demo-grid">
+    <div class="demo-grid-left" id="ctx-list-container"></div>
+    <div class="demo-grid-right" id="ctx-detail-container" style="display:flex;flex-direction:column;height:420px;"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- MESSAGE                                                     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="demo-section">
+  <div class="demo-section-title">Message &mdash; MessageList standalone</div>
+  <div class="demo-standalone" id="msg-standalone" style="height:380px;display:flex;flex-direction:column;"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- TOOL                                                        -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="demo-section">
+  <div class="demo-section-title">ToolDef</div>
+  <div class="demo-grid">
+    <div class="demo-grid-left" id="tool-list-container"></div>
+    <div class="demo-grid-right" id="tool-detail-container"></div>
+  </div>
+</div>
+
+<script type="module">
+import { ConfigCompact, ConfigDetail, ConfigList } from "./js/components/config.js";
+import { ContextCompact, ContextDetail, ContextList } from "./js/components/context.js";
+import { MessageCompact, MessageDetail, MessageList } from "./js/components/message.js";
+import { ToolCompact, ToolDetail, ToolList } from "./js/components/tool.js";
+
+// ══ Sample Data ═════════════════════════════════════════════
+
+const configs = [
+  { name: "Fast", model: "deepseek-v4-flash", temperature: 0.3, maxTokens: 2048, topP: 0.9, thinking: "disabled", stop: [], autoExecute: true },
+  { name: "Creative", model: "deepseek-v4-pro", temperature: 1.2, maxTokens: 4096, topP: 1, thinking: { effort: "high" }, stop: ["END"], autoExecute: false },
+  { name: "Precise", model: "deepseek-v4-flash", temperature: 0.1, maxTokens: 1024, topP: 0.5, thinking: "disabled", autoExecute: false },
+];
+
+const contexts = [
+  {
+    name: "Debug session",
+    messages: [
+      { role: "system", content: "You are a helpful coding assistant." },
+      { role: "user", content: "有什么方法可以列出桌面上所有文件？" },
+      { role: "assistant", content: "我可以使用 `list_directory` 工具来列出桌面文件。", tool_calls: [{ id: "call_01", type: "function", function: { name: "list_directory", arguments: '{"path":"~/Desktop"}' } }] },
+      { role: "tool", content: '["Crpyto","middlware","homework.pdf","notes.txt"]', tool_call_id: "call_01" },
+      { role: "assistant", content: "桌面上有以下内容：\n\n**文件夹：**\n- `Crpyto`\n- `middlware`\n\n**文件：**\n- `homework.pdf`\n- `notes.txt`\n\n共 4 个项目。" },
+    ],
+    tools: [{ type: "function", function: { name: "list_directory", description: "List files in a directory", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } } }],
+  },
+  {
+    name: "Empty chat",
+    messages: [],
+    tools: [],
+  },
+];
+
+const sampleMessages = [
+  { role: "system", content: "You are a helpful assistant. Reply in Chinese." },
+  { role: "user", content: "解释一下什么是闭包" },
+  { role: "assistant", content: "**闭包（Closure）** 是指一个函数能够记住并访问它的词法作用域，即使这个函数在其词法作用域之外执行。\n\n```javascript\nfunction outer() {\n  let x = 10;\n  return function inner() {\n    console.log(x);\n  };\n}\nconst fn = outer();\nfn(); // 10 — 仍然能访问 x\n```\n\n关键点：\n1. 内部函数持有对外部变量的引用\n2. 外部函数返回后，变量不会被垃圾回收\n3. 常用于数据封装和工厂函数" },
+  { role: "user", content: "给一个实际应用场景" },
+  { role: "assistant", content: "最常见的场景是**事件处理器的工厂函数**：\n\n```javascript\nfunction createCounter(start) {\n  let count = start;\n  return {\n    increment: () => ++count,\n    get: () => count,\n  };\n}\nconst c = createCounter(5);\nc.increment(); // 6\nc.get();      // 6\n```\n\n`count` 变量被 `increment` 和 `get` 两个闭包共享，外部完全无法直接访问。" },
+];
+
+const tools = [
+  { type: "function", function: { name: "list_directory", description: "List all filenames (files and subdirectories) in a given directory path. Returns a JSON array of filename strings.", parameters: { type: "object", properties: { path: { type: "string", description: "Directory path to list. Supports absolute Windows paths, relative paths, and ~/ for home directory." } }, required: ["path"] } } },
+  { type: "function", function: { name: "read_file", description: "Read the contents of a file", parameters: { type: "object", properties: { filepath: { type: "string" } }, required: ["filepath"] } } },
+  { type: "function", function: { name: "search_code", description: "Search the codebase for a pattern", parameters: { type: "object", properties: { pattern: { type: "string" }, glob: { type: "string" } }, required: ["pattern"] } } },
+];
+
+// ══ Render: Config ══════════════════════════════════════════
+
+let cfgIdx = 0;
+
+function renderConfigSection() {
+  const listCtr = document.getElementById("cfg-list-container");
+  const detailCtr = document.getElementById("cfg-detail-container");
+
+  listCtr.innerHTML = "";
+  detailCtr.innerHTML = "";
+
+  const list = ConfigList(configs, cfgIdx, {
+    onSelect: (i) => { cfgIdx = i; renderConfigSection(); },
+    onAdd: () => { cfgIdx = configs.length - 1; renderConfigSection(); },
+    onDelete: (i) => {
+      if (configs.length <= 1) return;
+      if (cfgIdx >= configs.length) cfgIdx = configs.length - 1;
+      renderConfigSection();
+    },
+  });
+  listCtr.appendChild(list);
+
+  const detail = ConfigDetail(configs[cfgIdx], {
+    onSave: (data) => {
+      Object.assign(configs[cfgIdx], data);
+      renderConfigSection();
+    },
+    onDelete: () => {
+      if (configs.length <= 1) return;
+      configs.splice(cfgIdx, 1);
+      if (cfgIdx >= configs.length) cfgIdx = configs.length - 1;
+      renderConfigSection();
+    },
+  });
+  detailCtr.appendChild(detail);
+}
+
+renderConfigSection();
+
+// ══ Render: Context ═════════════════════════════════════════
+
+let ctxIdx = 0;
+let ctxDetail = null;
+
+function renderContextSection() {
+  const listCtr = document.getElementById("ctx-list-container");
+  const detailCtr = document.getElementById("ctx-detail-container");
+
+  listCtr.innerHTML = "";
+  detailCtr.innerHTML = "";
+
+  const list = ContextList(contexts, ctxIdx, {
+    onSelect: (i) => { ctxIdx = i; renderContextSection(); },
+    onAdd: () => { ctxIdx = contexts.length - 1; renderContextSection(); },
+    onDelete: (i) => {
+      if (contexts.length <= 1) return;
+      if (ctxIdx >= contexts.length) ctxIdx = contexts.length - 1;
+      renderContextSection();
+    },
+  });
+  listCtr.appendChild(list);
+
+  const detail = ContextDetail(contexts[ctxIdx], {
+    onNameChange: (name) => { contexts[ctxIdx].name = name; },
+    onToolClick: () => alert("Tools panel would open here. Tools: " + (contexts[ctxIdx].tools ?? []).map(t => t.function.name).join(", ")),
+    onMessageSubmit: (content) => {
+      contexts[ctxIdx].messages.push(
+        { role: "user", content },
+        { role: "assistant", content: "[demo] This is a simulated assistant reply to: \"" + content + "\". In the real app, this would be an API call." },
+      );
+      ctxDetail.refreshMessages();
+    },
+  });
+  ctxDetail = detail;
+  detailCtr.appendChild(detail.el);
+}
+
+renderContextSection();
+
+// ══ Render: Message ═════════════════════════════════════════
+
+(function renderMessageStandalone() {
+  const ctr = document.getElementById("msg-standalone");
+  const msgs = [...sampleMessages]; // working copy
+
+  const list = MessageList(msgs, {
+    placeholder: "Type to test MessageList...",
+    onSubmit: (content) => {
+      msgs.push({ role: "user", content });
+      msgs.push({ role: "assistant", content: "[demo reply] " + content });
+      list.refresh();
+    },
+  });
+  ctr.appendChild(list.el);
+})();
+
+// ══ Render: Tool ════════════════════════════════════════════
+
+let toolIdx = 0;
+
+function renderToolSection() {
+  const listCtr = document.getElementById("tool-list-container");
+  const detailCtr = document.getElementById("tool-detail-container");
+
+  listCtr.innerHTML = "";
+  detailCtr.innerHTML = "";
+
+  const list = ToolList(tools, toolIdx, {
+    onSelect: (i) => { toolIdx = i; renderToolSection(); },
+    onAdd: () => { toolIdx = tools.length - 1; renderToolSection(); },
+    onDelete: (i) => {
+      if (tools.length <= 1) return;
+      if (toolIdx >= tools.length) toolIdx = tools.length - 1;
+      renderToolSection();
+    },
+  });
+  listCtr.appendChild(list);
+
+  // list_directory (index 0) is the only built-in
+  const detail = ToolDetail(tools[toolIdx], {
+    builtin: toolIdx === 0,
+    onSave: (data) => {
+      Object.assign(tools[toolIdx], data);
+      renderToolSection();
+    },
+    onDelete: () => {
+      if (tools.length <= 1) return;
+      tools.splice(toolIdx, 1);
+      if (toolIdx >= tools.length) toolIdx = tools.length - 1;
+      renderToolSection();
+    },
+  });
+  detailCtr.appendChild(detail);
+}
+
+renderToolSection();
+</script>
+
+</body>
+</html>

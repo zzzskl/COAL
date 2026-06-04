@@ -73,6 +73,7 @@ export function initChat(refreshAll, getConfig) {
         topP: cfg.topP,
         thinking: cfg.thinking,
         stop: cfg.stop,
+        autoExecute: cfg.autoExecute,
       };
 
       await fetch("/api/chat", {

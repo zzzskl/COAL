@@ -6,17 +6,20 @@ import { initExecutor } from "./executor.js";
 import { initLogs } from "./logs.js";
 
 // Shared state
-let sessionId = sessionStorage.getItem("coal-session");
+let sessionId = localStorage.getItem("coal-session");
 if (!sessionId) {
   sessionId = crypto.randomUUID();
-  sessionStorage.setItem("coal-session", sessionId);
+  localStorage.setItem("coal-session", sessionId);
 }
+
+let userName = localStorage.getItem("coal-user") || "default";
 
 window.COAL = {
   headers() {
     return {
       "Content-Type": "application/json",
       "x-session-id": sessionId,
+      "x-user": userName,
     };
   },
 };
@@ -80,6 +83,24 @@ const ctxBuilder = initContextBuilder(refreshAll);
 const executor = initExecutor(refreshAll);
 const logs = initLogs();
 
+// === User switching ===
+const userNameInput = document.getElementById("user-name");
+userNameInput.value = userName;
+
+userNameInput.addEventListener("change", async () => {
+  const newUser = userNameInput.value.trim() || "default";
+  if (newUser === userName) return;
+  userName = newUser;
+  localStorage.setItem("coal-user", userName);
+  // Tell server to switch user
+  await fetch("/api/user/switch", {
+    method: "POST",
+    headers: window.COAL.headers(),
+    body: JSON.stringify({ user: userName }),
+  });
+  await refreshAll();
+});
+
 async function refreshAll() {
   const res = await fetch("/api/context", {
     headers: window.COAL.headers(),
@@ -90,6 +111,7 @@ async function refreshAll() {
   const sysMsg = data.messages.find((m) => m.role === "system");
   config.setSystemPrompt(sysMsg ? sysMsg.content : "");
   tools.loadTools(data.tools);
+  await config.loadConfig();
   await logs.refreshLogs();
 }
 

@@ -1,6 +1,6 @@
 import express from "express";
-import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, unlinkSync, renameSync } from "node:fs";
+import { resolve, basename, dirname } from "node:path";
 import { Model } from "../src/model/index.js";
 import { Context } from "../src/context/index.js";
 import type { ToolDef } from "../src/context/index.js";
@@ -8,7 +8,7 @@ import { logger } from "../src/logger/index.js";
 import { executePendingTools } from "../src/executor/index.js";
 import { registry, getBuiltinToolDefs } from "../src/tools/index.js";
 
-const CONTEXTS_DIR = resolve(process.cwd(), "contexts");
+const DATA_DIR = resolve(process.cwd(), "data", "users");
 
 const app = express();
 
@@ -16,6 +16,7 @@ const app = express();
 app.use((req, _res, next) => {
   logger.info(`${req.method} ${req.path}`, {
     sessionId: req.headers["x-session-id"] ?? "none",
+    user: req.headers["x-user"] ?? "none",
   });
   next();
 });
@@ -30,20 +31,95 @@ interface SessionConfig {
   topP?: number;
   thinking?: "disabled" | { effort: "high" | "max" };
   stop?: string[];
+  autoExecute?: boolean;
 }
 
 interface Session {
   ctx: Context;
   config: SessionConfig;
+  user: string;
 }
 
 const sessions = new Map<string, Session>();
 
-function getSession(sessionId: string): Session {
-  let session = sessions.get(sessionId);
+// ── user path helpers ─────────────────────────────────────────────
+
+function userDir(user: string) {
+  return resolve(DATA_DIR, user);
+}
+function userConfigPath(user: string) {
+  return resolve(userDir(user), "config.json");
+}
+function userActivePath(user: string) {
+  return resolve(userDir(user), "active.json");
+}
+function userSavedDir(user: string) {
+  return resolve(userDir(user), "saved");
+}
+
+function ensureDir(p: string) {
+  if (!existsSync(p)) mkdirSync(p, { recursive: true });
+}
+
+// ── atomic file write ─────────────────────────────────────────────
+
+function atomicWrite(filePath: string, data: string) {
+  const tmp = filePath + ".tmp";
+  ensureDir(dirname(filePath));
+  writeFileSync(tmp, data, "utf-8");
+  renameSync(tmp, filePath);
+}
+
+// ── user data I/O ─────────────────────────────────────────────────
+
+function readUserConfig(user: string): SessionConfig | null {
+  const p = userConfigPath(user);
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; }
+}
+
+function writeUserConfig(user: string, config: SessionConfig) {
+  atomicWrite(userConfigPath(user), JSON.stringify(config, null, 2));
+}
+
+function readUserActive(user: string): Record<string, unknown> | null {
+  const p = userActivePath(user);
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; }
+}
+
+function writeUserActive(user: string, ctx: Context) {
+  const data = {
+    ...ctx.toJSON(),
+    savedAt: new Date().toISOString(),
+  };
+  atomicWrite(userActivePath(user), JSON.stringify(data, null, 2));
+}
+
+// ── session management ────────────────────────────────────────────
+
+function sessionKey(user: string, sessionId: string) {
+  return `${user}:${sessionId}`;
+}
+
+function getSession(user: string, sessionId: string): Session {
+  const key = sessionKey(user, sessionId);
+  let session = sessions.get(key);
   if (!session) {
-    session = { ctx: new Context(), config: {} };
-    sessions.set(sessionId, session);
+    // Try disk restore
+    const config = readUserConfig(user) ?? {};
+    const activeJson = readUserActive(user);
+    let ctx: Context;
+    if (activeJson) {
+      ctx = Context.fromJSON(activeJson as any);
+      logger.info(`session restored from disk for user "${user}"`, {
+        msgCount: ctx.messages.length,
+      });
+    } else {
+      ctx = new Context();
+    }
+    session = { ctx, config, user };
+    sessions.set(key, session);
   }
   return session;
 }
@@ -58,17 +134,91 @@ function requireSession(
     res.status(400).json({ error: "x-session-id header is required" });
     return;
   }
+  const user = (req.headers["x-user"] as string) || "default";
   (req as any).sessionId = sessionId;
-  (req as any).session = getSession(sessionId);
+  (req as any).user = user;
+  (req as any).session = getSession(user, sessionId);
   next();
 }
+
+// ── debounced auto-save ───────────────────────────────────────────
+
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleSave(user: string, session: Session) {
+  const existing = saveTimers.get(user);
+  if (existing) clearTimeout(existing);
+  saveTimers.set(user, setTimeout(() => {
+    try {
+      writeUserConfig(user, session.config);
+      writeUserActive(user, session.ctx);
+      saveTimers.delete(user);
+    } catch (err) {
+      logger.warn(`auto-save failed for "${user}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, 300));
+}
+
+// ── user switch ───────────────────────────────────────────────────
+
+// POST /api/user/switch — save current, load target
+app.post("/api/user/switch", requireSession, async (req, res) => {
+  const { user: targetUser } = req.body as { user?: string };
+  if (!targetUser) {
+    res.status(400).json({ error: "user is required" });
+    return;
+  }
+  const currentSession: Session = (req as any).session;
+  const currentUser: string = (req as any).user;
+
+  // Save current user state
+  try {
+    writeUserConfig(currentUser, currentSession.config);
+    writeUserActive(currentUser, currentSession.ctx);
+  } catch (err) {
+    logger.warn(`failed to save current user "${currentUser}": ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Load target user — create new session (same sessionId, new user)
+  const sessionId: string = (req as any).sessionId;
+  const newKey = sessionKey(targetUser, sessionId);
+  // Remove old key, create new
+  const oldKey = sessionKey(currentUser, sessionId);
+  sessions.delete(oldKey);
+  const newSession = getSession(targetUser, sessionId);
+  sessions.set(newKey, newSession);
+
+  // Update req
+  (req as any).user = targetUser;
+  (req as any).session = newSession;
+
+  res.json({
+    user: targetUser,
+    context: newSession.ctx.toJSON(),
+    config: newSession.config,
+  });
+});
+
+// ── GET /api/user — get current user info ─────────────────────────
+
+app.get("/api/user", requireSession, (req, res) => {
+  const session: Session = (req as any).session;
+  const user: string = (req as any).user;
+  res.json({ user, config: session.config });
+});
+
+// ── chat ──────────────────────────────────────────────────────────
 
 // POST /api/chat
 app.post("/api/chat", requireSession, async (req, res) => {
   try {
-    const { message } = req.body as { message?: string };
-
     const session: Session = (req as any).session;
+    const user: string = (req as any).user;
+    const { message, autoExecute: reqAutoExecute } = req.body as {
+      message?: string;
+      autoExecute?: boolean;
+    };
+    const autoExecute = reqAutoExecute ?? session.config.autoExecute ?? false;
     const {
       model,
       temperature,
@@ -91,36 +241,93 @@ app.post("/api/chat", requireSession, async (req, res) => {
 
     logger.info(`chat: ctx has ${session.ctx.messages.length} messages before ask`);
 
-    const m = new Model().context(session.ctx);
-    const cfg = session.config;
-    if (cfg.model) m.model(cfg.model);
-    if (cfg.temperature !== undefined) m.temperature(cfg.temperature);
-    if (cfg.maxTokens !== undefined) m.maxTokens(cfg.maxTokens);
-    if (cfg.topP !== undefined) m.topP(cfg.topP);
-    if (cfg.stop) m.stop(cfg.stop);
-    if (cfg.thinking === "disabled") {
-      m.noThinking();
-    } else if (cfg.thinking?.effort) {
-      m.thinking(cfg.thinking.effort);
+    function makeModel() {
+      const m = new Model().context(session.ctx);
+      const cfg = session.config;
+      if (cfg.model) m.model(cfg.model);
+      if (cfg.temperature !== undefined) m.temperature(cfg.temperature);
+      if (cfg.maxTokens !== undefined) m.maxTokens(cfg.maxTokens);
+      if (cfg.topP !== undefined) m.topP(cfg.topP);
+      if (cfg.stop) m.stop(cfg.stop);
+      if (cfg.thinking === "disabled") {
+        m.noThinking();
+      } else if (cfg.thinking?.effort) {
+        m.thinking(cfg.thinking.effort);
+      }
+      return m;
     }
 
-    const result = await m.ask(message);
+    let currentResult = await makeModel().ask(message);
 
     logger.info(`chat: reply received`, {
-      contentLen: result.content?.length ?? 0,
-      hasToolCalls: result.tool_calls?.length > 0,
+      contentLen: currentResult.content?.length ?? 0,
+      hasToolCalls: (currentResult.tool_calls?.length ?? 0) > 0,
       ctxSize: session.ctx.messages.length,
     });
 
+    let totalExecuted = 0;
+    if (autoExecute && currentResult.tool_calls?.length) {
+      const MAX_ROUNDS = 10;
+      for (let round = 0; round < MAX_ROUNDS; round++) {
+        const executed = executePendingTools(session.ctx, registry as any);
+        if (executed.length === 0) break;
+        totalExecuted += executed.length;
+        logger.info(`auto-exec round ${round + 1}: ${executed.length} tool(s)`, {
+          executed,
+          ctxSize: session.ctx.messages.length,
+        });
+
+        currentResult = await makeModel().ask();
+        if (!currentResult.tool_calls?.length) break;
+      }
+      if (totalExecuted > 0) {
+        logger.info(`auto-exec done: ${totalExecuted} total tool(s) executed`);
+      }
+    }
+
+    scheduleSave(user, session);
+
     res.json({
-      reply: result.content,
-      tool_calls: result.tool_calls,
+      reply: currentResult.content,
+      tool_calls: currentResult.tool_calls,
+      autoExecuted: totalExecuted > 0 ? totalExecuted : undefined,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });
   }
 });
+
+// ── config ────────────────────────────────────────────────────────
+
+// GET /api/config — read current session configuration
+app.get("/api/config", requireSession, (req, res) => {
+  const session: Session = (req as any).session;
+  res.json(session.config);
+});
+
+// PUT /api/config — update session configuration
+app.put("/api/config", requireSession, (req, res) => {
+  const session: Session = (req as any).session;
+  const user: string = (req as any).user;
+  const {
+    model, temperature, maxTokens, topP, thinking, stop, autoExecute,
+  } = req.body as SessionConfig;
+
+  if (model !== undefined) session.config.model = model;
+  if (temperature !== undefined) session.config.temperature = temperature;
+  if (maxTokens !== undefined) session.config.maxTokens = maxTokens;
+  if (topP !== undefined) session.config.topP = topP;
+  if (thinking !== undefined) session.config.thinking = thinking;
+  if (stop !== undefined) session.config.stop = stop;
+  if (autoExecute !== undefined) session.config.autoExecute = autoExecute;
+
+  scheduleSave(user, session);
+
+  res.json(session.config);
+});
+
+// ── context ───────────────────────────────────────────────────────
 
 // GET /api/context
 app.get("/api/context", requireSession, (_req, res) => {
@@ -132,6 +339,7 @@ app.get("/api/context", requireSession, (_req, res) => {
 app.post("/api/context/system", requireSession, (req, res) => {
   const { content } = req.body as { content?: string };
   const session: Session = (req as any).session;
+  const user: string = (req as any).user;
   if (content) {
     session.ctx.system(content);
   } else {
@@ -144,13 +352,16 @@ app.post("/api/context/system", requireSession, (req, res) => {
       });
     }
   }
+  scheduleSave(user, session);
   res.json(session.ctx.toJSON());
 });
 
 // DELETE /api/context
 app.delete("/api/context", requireSession, (req, res) => {
   const session: Session = (req as any).session;
+  const user: string = (req as any).user;
   session.ctx.clear();
+  scheduleSave(user, session);
   res.json(session.ctx.toJSON());
 });
 
@@ -171,10 +382,12 @@ app.post("/api/context/message", requireSession, (req, res) => {
     return;
   }
   const session: Session = (req as any).session;
+  const user: string = (req as any).user;
   session.ctx.add(role as any, content, {
     toolCallId: tool_call_id,
     toolCalls: tool_calls,
   });
+  scheduleSave(user, session);
   res.json(session.ctx.toJSON());
 });
 
@@ -188,6 +401,7 @@ app.put("/api/context/message/:index", requireSession, (req, res) => {
     tool_calls?: any[];
   };
   const session: Session = (req as any).session;
+  const user: string = (req as any).user;
   if (isNaN(index) || index < 0 || index >= session.ctx.messages.length) {
     res.status(404).json({ error: "message index out of range" });
     return;
@@ -203,6 +417,7 @@ app.put("/api/context/message/:index", requireSession, (req, res) => {
       toolCalls: tool_calls ?? (existing as any).tool_calls,
     }
   );
+  scheduleSave(user, session);
   res.json(session.ctx.toJSON());
 });
 
@@ -210,11 +425,13 @@ app.put("/api/context/message/:index", requireSession, (req, res) => {
 app.delete("/api/context/message/:index", requireSession, (req, res) => {
   const index = parseInt(req.params.index, 10);
   const session: Session = (req as any).session;
+  const user: string = (req as any).user;
   if (isNaN(index) || index < 0 || index >= session.ctx.messages.length) {
     res.status(404).json({ error: "message index out of range" });
     return;
   }
   session.ctx.removeAt(index);
+  scheduleSave(user, session);
   res.json(session.ctx.toJSON());
 });
 
@@ -225,29 +442,37 @@ app.put("/api/context/tools", requireSession, (req, res) => {
     toolChoice?: any;
   };
   const session: Session = (req as any).session;
+  const user: string = (req as any).user;
   if (tools !== undefined) session.ctx.setTools(tools);
   if (toolChoice !== undefined) session.ctx.setToolChoice(toolChoice);
+  scheduleSave(user, session);
   res.json(session.ctx.toJSON());
 });
 
 // POST /api/context/execute — run executor on pending tool_calls
 app.post("/api/context/execute", requireSession, (req, res) => {
   const session: Session = (req as any).session;
+  const user: string = (req as any).user;
   const executed = executePendingTools(session.ctx, registry as any);
   logger.info(`executor ran: ${executed.length} tool(s) executed`, {
     executed,
     ctxSize: session.ctx.messages.length,
   });
+  scheduleSave(user, session);
   res.json({
     executed,
     ...session.ctx.toJSON(),
   } as any);
 });
 
+// ── tools ─────────────────────────────────────────────────────────
+
 // GET /api/tools — list built-in tool definitions
 app.get("/api/tools", (_req, res) => {
   res.json({ builtin: getBuiltinToolDefs() });
 });
+
+// ── logs ──────────────────────────────────────────────────────────
 
 // GET /api/logs — return recent server logs
 app.get("/api/logs", (_req, res) => {
@@ -260,12 +485,16 @@ app.delete("/api/logs", (_req, res) => {
   res.json({ entries: [] });
 });
 
+// ── debug ─────────────────────────────────────────────────────────
+
 // GET /api/debug — full state snapshot for debugging
 app.get("/api/debug", requireSession, (req, res) => {
   const session: Session = (req as any).session;
   const sessionId = (req as any).sessionId as string;
+  const user: string = (req as any).user;
   res.json({
     sessionId,
+    user,
     at: new Date().toISOString(),
     context: session.ctx.toJSON(),
     config: session.config,
@@ -273,19 +502,18 @@ app.get("/api/debug", requireSession, (req, res) => {
   });
 });
 
-// === Context persistence ===
+// ── context persistence (per-user) ────────────────────────────────
 
-function ensureContextsDir() {
-  if (!existsSync(CONTEXTS_DIR)) {
-    mkdirSync(CONTEXTS_DIR, { recursive: true });
-  }
-}
-
-// GET /api/context/list — list saved context files
-app.get("/api/context/list", (_req, res) => {
+// GET /api/context/list — list saved context files for current user
+app.get("/api/context/list", requireSession, (req, res) => {
   try {
-    ensureContextsDir();
-    const files = readdirSync(CONTEXTS_DIR)
+    const user: string = (req as any).user;
+    const dir = userSavedDir(user);
+    if (!existsSync(dir)) {
+      res.json({ files: [] });
+      return;
+    }
+    const files = readdirSync(dir)
       .filter((f) => f.endsWith(".json"))
       .map((f) => basename(f, ".json"));
     res.json({ files });
@@ -294,7 +522,7 @@ app.get("/api/context/list", (_req, res) => {
   }
 });
 
-// POST /api/context/save — save current context to file
+// POST /api/context/save — save current context to user's saved/ dir
 app.post("/api/context/save", requireSession, (req, res) => {
   const { filename } = req.body as { filename?: string };
   if (!filename) {
@@ -302,11 +530,17 @@ app.post("/api/context/save", requireSession, (req, res) => {
     return;
   }
   try {
-    ensureContextsDir();
+    const user: string = (req as any).user;
     const session: Session = (req as any).session;
-    const filePath = resolve(CONTEXTS_DIR, `${filename}.json`);
-    writeFileSync(filePath, JSON.stringify(session.ctx.toJSON(), null, 2), "utf-8");
-    logger.info(`context saved: ${filename}.json`, {
+    const dir = userSavedDir(user);
+    ensureDir(dir);
+    const filePath = resolve(dir, `${filename}.json`);
+    const data = {
+      ...session.ctx.toJSON(),
+      savedAt: new Date().toISOString(),
+    };
+    writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+    logger.info(`context saved: ${filename}.json for user "${user}"`, {
       msgCount: session.ctx.messages.length,
     });
     res.json({ saved: `${filename}.json`, messages: session.ctx.messages.length });
@@ -316,7 +550,7 @@ app.post("/api/context/save", requireSession, (req, res) => {
   }
 });
 
-// POST /api/context/load — load context from file into current session
+// POST /api/context/load — load context from user's saved/ dir
 app.post("/api/context/load", requireSession, (req, res) => {
   const { filename } = req.body as { filename?: string };
   if (!filename) {
@@ -324,15 +558,15 @@ app.post("/api/context/load", requireSession, (req, res) => {
     return;
   }
   try {
-    const filePath = resolve(CONTEXTS_DIR, `${filename}.json`);
+    const user: string = (req as any).user;
+    const session: Session = (req as any).session;
+    const filePath = resolve(userSavedDir(user), `${filename}.json`);
     if (!existsSync(filePath)) {
       res.status(404).json({ error: "file not found" });
       return;
     }
     const raw = readFileSync(filePath, "utf-8");
     const json = JSON.parse(raw);
-    const session: Session = (req as any).session;
-    // Replace session context with loaded one
     const newCtx = Context.fromJSON(json);
     session.ctx.clear();
     for (const m of newCtx.messages) {
@@ -343,7 +577,8 @@ app.post("/api/context/load", requireSession, (req, res) => {
     }
     if (newCtx.getTools()) session.ctx.setTools(newCtx.getTools()!);
     if (newCtx.getToolChoice()) session.ctx.setToolChoice(newCtx.getToolChoice()!);
-    logger.info(`context loaded: ${filename}.json`, {
+    scheduleSave(user, session);
+    logger.info(`context loaded: ${filename}.json for user "${user}"`, {
       msgCount: session.ctx.messages.length,
     });
     res.json({
@@ -357,13 +592,14 @@ app.post("/api/context/load", requireSession, (req, res) => {
 });
 
 // DELETE /api/context/file/:filename — delete a saved context file
-app.delete("/api/context/file/:filename", (req, res) => {
+app.delete("/api/context/file/:filename", requireSession, (req, res) => {
   const { filename } = req.params;
   try {
-    const filePath = resolve(CONTEXTS_DIR, `${filename}.json`);
+    const user: string = (req as any).user;
+    const filePath = resolve(userSavedDir(user), `${filename}.json`);
     if (existsSync(filePath)) {
       unlinkSync(filePath);
-      logger.info(`context deleted: ${filename}.json`);
+      logger.info(`context deleted: ${filename}.json for user "${user}"`);
       res.json({ deleted: `${filename}.json` });
     } else {
       res.status(404).json({ error: "file not found" });
