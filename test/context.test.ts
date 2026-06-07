@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Context } from "../src/context/index.js";
+import { Context } from "../src/context/core/index.js";
 
 test("Context — constructor without system prompt", () => {
   const ctx = new Context();
@@ -215,7 +215,6 @@ test("Context — fromJSON() restores tools", () => {
 test("Context — messages is readonly from outside", () => {
   const ctx = new Context();
   ctx.user("a");
-  // ReadonlyArray prevents mutation at type level
   const msgs = ctx.messages;
   assert.equal(msgs.length, 1);
 });

@@ -5,10 +5,11 @@
   "scripts": {
     "dev": "tsx --watch src/index.ts",
     "ui": "tsx ui/server.ts",
-    "test": "tsx --test test/*.test.ts && node test/ui/run.js",
+    "test": "tsx --test test/*.test.ts && node test/ui/run.js && npm run check:ui",
     "test:ui": "node test/ui/run.js",
     "test:browser": "playwright test --config=playwright.config.mjs",
-    "test:e2e": "playwright test --config=playwright.e2e.config.mjs"
+    "test:e2e": "playwright test --config=playwright.e2e.config.mjs",
+    "check:ui": "tsx scripts/check-ui-completeness.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
@@ -18,5 +19,8 @@
     "linkedom": "^0.18.12",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@vue/reactivity": "^3.5.35"
   }
 }

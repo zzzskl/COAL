@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Context } from "../src/context/index.js";
-import { executePendingTools } from "../src/executor/index.js";
+import { Context } from "../src/context/core/index.js";
+import { executePendingTools } from "../src/executor/core/index.js";
 
 const fakeTools = {
   get_weather: (args: Record<string, unknown>) =>
@@ -36,7 +36,7 @@ test("executor — executes pending tool_call and appends result", () => {
   const result = executePendingTools(ctx, fakeTools);
 
   assert.deepEqual(result, ["c1"]);
-  assert.equal(ctx.messages.length, 4); // sys + user + assistant + tool
+  assert.equal(ctx.messages.length, 4);
 
   const toolMsg = ctx.messages[ctx.messages.length - 1] as any;
   assert.equal(toolMsg.role, "tool");
@@ -54,17 +54,15 @@ test("executor — skips already resolved tool_calls", () => {
   const result = executePendingTools(ctx, fakeTools);
 
   assert.deepEqual(result, []);
-  assert.equal(ctx.messages.length, 3); // sys + assistant + tool
+  assert.equal(ctx.messages.length, 3);
 });
 
 test("executor — mixed: some resolved, some pending", () => {
   const ctx = new Context("sys");
-  // Two tool_calls in one assistant message
   ctx.assistant(null, [
     { id: "c1", type: "function", function: { name: "get_weather", arguments: '{"city":"Beijing"}' } },
     { id: "c2", type: "function", function: { name: "get_weather", arguments: '{"city":"Shanghai"}' } },
   ]);
-  // Only c1 is resolved
   ctx.toolResult("c1", "done");
 
   const result = executePendingTools(ctx, fakeTools);
@@ -112,9 +110,8 @@ test("executor — second call is idempotent", () => {
 
   const r1 = executePendingTools(ctx, fakeTools);
   assert.deepEqual(r1, ["c1"]);
-  assert.equal(ctx.messages.length, 3); // sys + assistant + tool
+  assert.equal(ctx.messages.length, 3);
 
-  // Second call should find nothing pending
   const r2 = executePendingTools(ctx, fakeTools);
   assert.deepEqual(r2, []);
   assert.equal(ctx.messages.length, 3);
@@ -132,7 +129,6 @@ test("executor — handles multiple assistant messages with tool_calls", () => {
     { id: "c2", type: "function", function: { name: "get_weather", arguments: '{"city":"London"}' } },
   ]);
 
-  // Only c2 is pending
   const result = executePendingTools(ctx, fakeTools);
 
   assert.deepEqual(result, ["c2"]);
@@ -141,7 +137,7 @@ test("executor — handles multiple assistant messages with tool_calls", () => {
 });
 
 test("executor — uses real registry from tools module", async () => {
-  const { registry } = await import("../src/tools/index.js");
+  const { registry } = await import("../src/tools/core/index.js");
 
   const ctx = new Context("sys");
   ctx.assistant(null, [

@@ -1,6 +1,6 @@
 // Context components: Compact / Detail / List
 
-import { MessageList } from "./message.js";
+import { MessageList } from "../message/message.js";
 
 function esc(s) { const d = document.createElement("div"); d.textContent = String(s ?? ""); return d.innerHTML; }
 

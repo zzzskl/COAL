@@ -1,7 +1,7 @@
 // context.vue.js — Vue 3 版 ContextCompact + ContextList + ContextBuilder
 
 import { ref, defineComponent } from "vue";
-import { openEditModal } from "./message.vue.js";
+import { openEditModal } from "../message/message.vue.js";
 
 // ── VueContextCompact ───────────────────────────────────
 export const VueContextCompact = defineComponent({
@@ -134,6 +134,28 @@ export const VueContextBuilder = defineComponent({
       get() { return this.collapsed; },
       set(v) { /* parent controls this */ },
     },
+    /** toolChoice 双向绑定：映射字符串 ↔ ToolChoice 类型 */
+    localToolChoice: {
+      get() {
+        const tc = this.ctx?.toolChoice;
+        if (!tc) return "auto";
+        if (typeof tc === "string") return tc;
+        if (tc.type === "function") return "tool:" + tc.function.name;
+        return "auto";
+      },
+      set(val) {
+        if (val.startsWith("tool:")) {
+          this.ctx.toolChoice = { type: "function", function: { name: val.slice(5) } };
+        } else {
+          this.ctx.toolChoice = val;
+        }
+        this.changed({});
+      },
+    },
+    /** 当前 toolChoice 是否为函数指定模式 */
+    isToolChoiceFunction() {
+      return typeof this.localToolChoice === "string" && this.localToolChoice.startsWith("tool:");
+    },
   },
   methods: {
     // ── Messages ──
@@ -154,11 +176,14 @@ export const VueContextBuilder = defineComponent({
     deleteMsg(idx) {
       if (!confirm("Delete this message?")) return;
       this.ctx.messages.splice(idx, 1);
-      // Adjust collapsed indices
       const nc = this.collapsed.map(c => c > idx ? c - 1 : c).filter(c => c !== idx);
       this.collapsed.length = 0;
       this.collapsed.push(...nc);
       this.changed({ collapsed: [...nc] });
+    },
+    /** 从此处分支：截断至此消息并创建新 context */
+    branchMsg(idx) {
+      this.changed({ branch: idx });
     },
     editMsg(idx) {
       const m = this.ctx.messages[idx];
@@ -254,6 +279,7 @@ export const VueContextBuilder = defineComponent({
             <span :class="['ctx-role', 'ctx-role-' + m.role]">{{ m.role }}</span>
             <span class="ctx-preview">{{ msgPreview(m) }}</span>
             <button class="ctx-edit-btn" title="Edit" @click="editMsg(i)">✎</button>
+            <button class="ctx-branch-btn" title="Branch from here" @click="branchMsg(i)">⊞</button>
             <button class="ctx-fold-btn" :title="isFolded(i) ? 'Expand' : 'Collapse'" @click="toggleFold(i)">{{ isFolded(i) ? '▸' : '▾' }}</button>
             <button class="ctx-del-btn" title="Delete" @click="deleteMsg(i)">×</button>
           </template>
@@ -295,6 +321,17 @@ export const VueContextBuilder = defineComponent({
           <span class="ctxb-avail-name" style="flex:1;color:var(--c-accent)">+ Custom Tool</span>
           <button class="cmp-btn" style="font-size:10px;padding:2px 6px" @click="addCustomTool">+Add</button>
         </div>
+      </div>
+
+      <!-- Tool choice -->
+      <div class="ctxb-section-label" style="margin-top:8px">Tool Choice</div>
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;font-size:12px">
+        <select v-model="localToolChoice" style="flex:1;padding:4px 6px;background:var(--c-bg);border:1px solid var(--c-border);border-radius:4px;color:var(--c-text);font-size:12px">
+          <option value="auto">auto</option>
+          <option value="none">none</option>
+          <option value="required">required</option>
+          <option v-for="t in tools" :key="t.function?.name" :value="'tool:' + t.function?.name">{{ t.function?.name }}</option>
+        </select>
       </div>
     </div>
   `,

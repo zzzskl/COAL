@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, mock } from "node:test";
-import { Context } from "../src/context/index.js";
-import { Model } from "../src/model/index.js";
+import { Context } from "../src/context/core/index.js";
+import { Model } from "../src/model/core/index.js";
 
 function mockFetch(response: object) {
   return mock.method(globalThis, "fetch", () =>
@@ -46,8 +46,7 @@ test("Model — ask(message) appends user message to context", async (t) => {
   const m = new Model().context(ctx);
   await m.ask("hello");
 
-  // First message is system, second is the user message we sent
-  assert.equal(ctx.messages.length, 3); // sys + user + assistant
+  assert.equal(ctx.messages.length, 3);
   assert.equal(ctx.messages[1].role, "user");
   assert.equal(ctx.messages[1].content, "hello");
 });
@@ -79,7 +78,7 @@ test("Model — ask(message) sends messages from context", async (t) => {
   assert.equal(body.messages[0].role, "system");
   assert.equal(body.messages[1].content, "existing question");
   assert.equal(body.messages[2].content, "existing answer");
-  assert.equal(body.messages[3].content, "new question"); // user
+  assert.equal(body.messages[3].content, "new question");
 });
 
 test("Model — ask(message) sends tools from context", async (t) => {
@@ -121,10 +120,10 @@ test("Model — ask() without args sends existing context messages", async (t) =
   ctx.user("q");
 
   const m = new Model().context(ctx);
-  await m.ask(); // no argument
+  await m.ask();
 
   const body = fetchBody() as any;
-  assert.equal(body.messages.length, 2); // sys + user (no new user added)
+  assert.equal(body.messages.length, 2);
 });
 
 test("Model — ask() auto-appends assistant response to context", async (t) => {
@@ -137,10 +136,8 @@ test("Model — ask() auto-appends assistant response to context", async (t) => 
   const m = new Model().context(ctx);
   const result = await m.ask("q");
 
-  // Check return value
   assert.equal(result.content, "the reply");
 
-  // Check context was updated
   const lastMsg = ctx.messages[ctx.messages.length - 1] as any;
   assert.equal(lastMsg.role, "assistant");
   assert.equal(lastMsg.content, "the reply");
@@ -271,7 +268,6 @@ test("Model — ask(message) with tool_calls in response", async (t) => {
   assert.equal(result.tool_calls!.length, 1);
   assert.equal(result.tool_calls![0].function.name, "search");
 
-  // Both content and tool_calls preserved in context
   const assistantMsg = ctx.messages[ctx.messages.length - 1] as any;
   assert.equal(assistantMsg.content, "searching...");
   assert.equal(assistantMsg.tool_calls.length, 1);
@@ -285,14 +281,13 @@ test("Model — multiple ask() calls build up context", async (t) => {
   const m = new Model().context(ctx);
 
   await m.ask("q1");
-  assert.equal(ctx.messages.length, 3); // sys + user(q1) + assistant(reply1)
+  assert.equal(ctx.messages.length, 3);
 
-  // Change mock response for second call
   mock.restoreAll();
   mockFetch({ choices: [{ message: { content: "reply2" } }] });
 
   await m.ask("q2");
-  assert.equal(ctx.messages.length, 5); // + user(q2) + assistant(reply2)
+  assert.equal(ctx.messages.length, 5);
   assert.equal(ctx.messages[3].content, "q2");
   assert.equal(ctx.messages[4].content, "reply2");
 });

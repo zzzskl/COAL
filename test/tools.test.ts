@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { listDirectory } from "../src/tools/index.js";
+import { listDirectory } from "../src/tools/core/index.js";
 
 test("tools — listDirectory lists files in ./src", () => {
   const files = listDirectory("./src");

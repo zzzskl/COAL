@@ -2,7 +2,7 @@
 // Sets up DOM via linkedom, runs test suite, prints results.
 
 import { parseHTML } from "linkedom";
-import { ContextCompact, ContextList, ContextDetail } from "../../ui/public/js/components/context.js";
+import { ContextCompact, ContextList, ContextDetail } from "../../ui/public/js/components/context/context.js";
 import { registerContextTests } from "./context.spec.js";
 
 // ── Setup global DOM ──────────────────────────────────────────

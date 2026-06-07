@@ -1,16 +1,16 @@
 // main.js — COAL app bootstrap and integration layer
 import { reactive, watch, createApp, h } from "vue";
-import { ConfigDetail, ConfigList } from "./components/config.js";
-import { ContextCompact, ContextDetail, ContextList } from "./components/context.js";
-import { ToolCompact, ToolDetail, ToolList } from "./components/tool.js";
-import { ContextBuilderPanel } from "./components/ctx-panel.js";
-import { LogsPanel } from "./components/logs-panel.js";
-import { ToolsPanel } from "./components/tools-panel.js";
+import { ConfigDetail, ConfigList } from "./components/config/config.js";
+import { ContextCompact, ContextDetail, ContextList } from "./components/context/context.js";
+import { ToolCompact, ToolDetail, ToolList } from "./components/tool/tool.js";
+import { ContextBuilderPanel } from "./components/context/ctx-panel.js";
+import { LogsPanel } from "./components/logger/logs-panel.js";
+import { ToolsPanel } from "./components/tool/tools-panel.js";
 import { readSSE } from "./sse.js";
-import { VueConfigList, VueConfigDetail } from "./components/config.vue.js";
-import { VueMessageList, openEditModal } from "./components/message.vue.js";
-import { VueContextList, VueContextBuilder } from "./components/context.vue.js";
-import { VueToolList, VueToolDetail } from "./components/tool.vue.js";
+import { VueConfigList, VueConfigDetail } from "./components/config/config.vue.js";
+import { VueMessageList, openEditModal } from "./components/message/message.vue.js";
+import { VueContextList, VueContextBuilder } from "./components/context/context.vue.js";
+import { VueToolList, VueToolDetail } from "./components/tool/tool.vue.js";
 
 // ══ State ══════════════════════════════════════════════════
 let userName = localStorage.getItem("coal-user") || "default";
@@ -24,28 +24,15 @@ const state = reactive({
   activeCtx: 0,
   meta: { context: {} },
   ui: { collapsed: {}, context: {} },
-  // 版本号计数器：递增即触发对应 watcher 自动调用 sync
-  _sync: { configs: 0, contexts: 0, ui: 0 },
+  /** 冻结标记：某个数据域正在被服务端处理，禁止前端修改 */
+  _freeze: { contexts: false },
 });
 
 // UI refs
 let messageList = null;
+let _processing = false;  // 防重入锁：SSE 处理期间禁止重复发送
+let booted = false;       // 启动标志：加载完成前 watcher 不触发 sync
 
-// ══ changed() — 声明式渲染 + 触发响应式 sync ═════════════
-const _changedRegistry = {};
-function changed(area) {
-  const entry = _changedRegistry[area];
-  if (!entry) return;
-  // 同步执行 render 函数（DOM 立即更新）
-  for (const fn of entry.render) fn();
-  // 递增版本号 → Vue watcher 自动调用 sync 函数
-  state._sync[area]++;
-}
-changed.register = function (area, { render, sync }) {
-  _changedRegistry[area] = { render: render || [], sync: sync || [] };
-};
-
-// Expose app state to sidebar modules (sb-context.js etc.)
 window.__COAL_APP__ = {
   state,
   getActiveConfig: () => state.configs[state.activeCfg],
@@ -54,7 +41,6 @@ window.__COAL_APP__ = {
   api,
   syncConfigs,
   syncContexts,
-  changed,
   syncUI,
 };
 
@@ -78,8 +64,7 @@ async function api(method, path, body) {
   return data;
 }
 
-// ══ Getters (stable refs for components) ═══════════════════
-
+// ══ Getters ═══════════════════════════════════════════════
 function getActiveConfig() { return state.configs[state.activeCfg]; }
 function getActiveContext() { return state.contexts[state.activeCtx]; }
 function getActiveMessages() { return getActiveContext()?.messages ?? []; }
@@ -126,12 +111,12 @@ function renderConfigCompact() {
 
   container.querySelector("#cfg-model-select").addEventListener("change", (e) => {
     cfg.model = e.target.value;
-    changed("configs");
+    syncConfigs();
   });
 
   container.querySelector("#cfg-auto-exec").addEventListener("change", (e) => {
     cfg.autoExecute = e.target.checked;
-    changed("configs");
+    syncConfigs();
   });
 }
 
@@ -140,7 +125,6 @@ function openConfigModal() {
   const body = document.getElementById("modal-body");
   overlay.classList.add("visible");
 
-  // 销毁之前的 Vue 应用
   let app = window.__cfgModalApp;
   if (app) { app.unmount(); window.__cfgModalApp = null; }
 
@@ -158,22 +142,21 @@ function openConfigModal() {
         h(VueConfigList, {
           configs: state.configs,
           activeIndex: state.activeCfg,
-          onSelect: (i) => { state.activeCfg = i; changed("configs"); },
-          onAdd: (idx) => { state.activeCfg = idx; changed("configs"); },
+          onSelect: (i) => { state.activeCfg = i; syncConfigs(); },
+          onAdd: (idx) => { state.activeCfg = idx; syncConfigs(); },
           onDelete: () => {
             if (state.activeCfg >= state.configs.length) {
               state.activeCfg = state.configs.length - 1;
             }
-            changed("configs");
+            syncConfigs();
           },
         }),
         h(VueConfigDetail, {
           config: activeCfg,
           canDelete: state.configs.length > 1,
           onSave: (data) => {
-            // 创建新对象引用以触发 Vue 响应式更新
             state.configs[state.activeCfg] = { ...activeCfg, ...data };
-            changed("configs");
+            syncConfigs();
           },
           onDelete: () => {
             if (state.configs.length <= 1) return;
@@ -181,7 +164,7 @@ function openConfigModal() {
             if (state.activeCfg >= state.configs.length) {
               state.activeCfg = state.configs.length - 1;
             }
-            changed("configs");
+            syncConfigs();
           },
         }),
       ]);
@@ -217,7 +200,6 @@ function initContextSwitcher() {
     if (i === state.activeCtx) opt.selected = true;
     sel.appendChild(opt);
   });
-  // Replace listener to avoid accumulation
   const handler = (e) => {
     state.activeCtx = parseInt(e.target.value);
     refreshMessageList();
@@ -233,7 +215,6 @@ function openContextModal() {
   const body = document.getElementById("modal-body");
   overlay.classList.add("visible");
 
-  // 销毁之前的 Vue 应用
   let app = window.__ctxModalApp;
   if (app) { app.unmount(); window.__ctxModalApp = null; }
 
@@ -253,8 +234,8 @@ function openContextModal() {
           contexts: state.contexts,
           activeIndex: state.activeCtx,
           names: state.ui?.context,
-          onAdd: (idx) => { state.activeCtx = idx; changed("contexts"); },
-          onSelect: (i) => { state.activeCtx = i; changed("contexts"); },
+          onAdd: (idx) => { state.activeCtx = idx; syncContexts(); },
+          onSelect: (i) => { state.activeCtx = i; syncContexts(); },
           onDelete: (i) => {
             if (state.contexts.length <= 1) return;
             if (state.ui?.context) {
@@ -267,14 +248,14 @@ function openContextModal() {
               state.ui.context = reindexed;
             }
             if (state.activeCtx >= state.contexts.length) state.activeCtx = state.contexts.length - 1;
-            changed("contexts");
-            changed("ui");
+            syncContexts();
+            syncUI();
           },
           onChange: (i, data) => {
             if (!state.ui.context) state.ui.context = {};
             if (!state.ui.context[i]) state.ui.context[i] = {};
             Object.assign(state.ui.context[i], data);
-            changed("ui");
+            syncUI();
           },
         }),
         h("div", {
@@ -311,14 +292,15 @@ function initMessageList() {
     onSubmit: handleSend,
     onClear: handleClear,
     onEditMessage: (index, data) => {
+      // 冻结期间禁止编辑
+      if (state._freeze.contexts) return;
       if (data === null) {
-        // data === null → user clicked Edit → open modal
         const ctx = getActiveContext();
         if (!ctx || !ctx.messages[index]) return;
         openEditModal(ctx.messages[index], {
           onSave: (d) => {
             Object.assign(ctx.messages[index], d);
-            changed("contexts");
+            syncContexts();
           },
         });
         return;
@@ -326,13 +308,14 @@ function initMessageList() {
       const ctx = getActiveContext();
       if (!ctx) return;
       Object.assign(ctx.messages[index], data);
-      changed("contexts");
+      syncContexts();
     },
     onDeleteMessage: (index) => {
+      if (state._freeze.contexts) return;
       const ctx = getActiveContext();
       if (!ctx) return;
       ctx.messages.splice(index, 1);
-      changed("contexts");
+      syncContexts();
     },
     onBranchMessage: handleMessageBranch,
   });
@@ -341,34 +324,33 @@ function initMessageList() {
 }
 
 async function handleSend(content) {
+  if (_processing) return;
   const ctx = getActiveContext();
   if (content && ctx) {
     ctx.messages.push({ role: "user", content });
   }
+
+  _processing = true;
+  state._freeze.contexts = true;
   messageList.setLoading(true);
   messageList.setEnabled(false);
 
   try {
-    if (content) {
-      // SSE 流式发送：render 立即显示用户消息，SSE 逐 token 更新
-      await sendWithSSE(ctx);
-    } else if (ctx) {
-      // 空输入（重新生成）：不添加新消息，通过 SSE 重新处理
-      await sendWithSSE(ctx, true);
-    }
+    await (content ? sendWithSSE(false) : sendWithSSE(true));
   } catch (err) {
     messageList.addError(err.message || String(err));
+  } finally {
+    state._freeze.contexts = false;
+    _processing = false;
+    messageList.setLoading(false);
+    messageList.setEnabled(true);
   }
-
-  messageList.setLoading(false);
-  messageList.setEnabled(true);
 }
 
 /**
  * 通过 POST /api/contexts/process 发送消息并消费 SSE 流。
- * 不再使用 changed("contexts") 的同步 PUT 路径。
  */
-async function sendWithSSE(ctx, regenerate = false) {
+async function sendWithSSE(regenerate = false) {
   // 渲染用户消息（立即显示）
   messageList.refresh();
 
@@ -387,7 +369,6 @@ async function sendWithSSE(ctx, regenerate = false) {
     throw new Error(err.error || `HTTP ${res.status}`);
   }
 
-  // 读取 SSE 事件流
   const reader = readSSE(res);
   let streamingContent = "";
 
@@ -396,18 +377,12 @@ async function sendWithSSE(ctx, regenerate = false) {
     messageList.setStreamingText(streamingContent);
   });
 
-  reader.on("status", () => {
-    // 工具执行轮次信息——不用 addError 显示
-  });
+  reader.on("status", () => {});
 
-  // 完全流式：tool_call 到达时追加到最后一条 assistant 消息
-  // 不提交 streaming 文本为独立消息——done 事件会替换为服务端权威版本
   reader.on("tool_call", (data) => {
     const curCtx = getActiveContext();
     if (!curCtx) return;
-
     const tc = { id: data.id, type: "function", function: { name: data.name, arguments: data.arguments } };
-    // 找到最后一条 assistant 消息，追加 tool_calls
     for (let i = curCtx.messages.length - 1; i >= 0; i--) {
       const m = curCtx.messages[i];
       if (m.role === "assistant") {
@@ -418,11 +393,9 @@ async function sendWithSSE(ctx, regenerate = false) {
     }
   });
 
-  // 完全流式：tool_result 到达时，直接追加 tool 消息
   reader.on("tool_result", (data) => {
     const curCtx = getActiveContext();
     if (!curCtx) return;
-
     curCtx.messages.push({
       role: "tool",
       content: data.result,
@@ -450,17 +423,23 @@ async function sendWithSSE(ctx, regenerate = false) {
 }
 
 async function handleClear() {
+  if (state._freeze.contexts) return;
   try {
     await api("DELETE", "/api/context");
     const ctx = getActiveContext();
-    if (ctx) ctx.messages = [];
-    changed("contexts");
+    if (ctx) {
+      ctx.messages = [];
+      ctx.tools = null;
+      ctx.toolChoice = null;
+    }
+    syncContexts();
   } catch (err) {
     console.warn("Clear failed:", err);
   }
 }
 
 async function handleMessageBranch(index) {
+  if (state._freeze.contexts) return;
   const ctx = getActiveContext();
   if (!ctx) return;
   const newCtx = {
@@ -469,12 +448,11 @@ async function handleMessageBranch(index) {
   };
   state.contexts.push(newCtx);
   state.activeCtx = state.contexts.length - 1;
-  // Set default name in ui.context
   const idx = state.contexts.length - 1;
   if (!state.ui.context) state.ui.context = {};
   state.ui.context[idx] = { name: `Chat ${idx + 1}` };
-  changed("contexts");
-  changed("ui");
+  syncContexts();
+  syncUI();
 }
 
 function refreshMessageList() {
@@ -505,7 +483,6 @@ function openCtxBuilderModal() {
   const ctx = getActiveContext();
   if (!ctx) return;
 
-  // 销毁之前的 Vue 应用
   if (window.__ctxBuilderApp) { window.__ctxBuilderApp.unmount(); window.__ctxBuilderApp = null; }
 
   const mountPt = document.createElement("div");
@@ -524,8 +501,12 @@ function openCtxBuilderModal() {
       if (extra?.collapsed) {
         state.ui.collapsed[state.activeCtx] = extra.collapsed;
       }
-      if (extra?.name || extra?.collapsed) changed("ui");
-      changed("contexts");
+      if (extra?.branch !== undefined) {
+        handleMessageBranch(extra.branch);
+        return;
+      }
+      if (extra?.name || extra?.collapsed) syncUI();
+      syncContexts();
     },
   });
   app.mount(mountPt);
@@ -611,15 +592,15 @@ function openToolsModal() {
           tools,
           activeIndex: idx,
           onSelect: (i) => { this.toolIdx = i; },
-          onAdd: (i) => { this.toolIdx = i; changed("contexts"); },
+          onAdd: (i) => { this.toolIdx = i; syncContexts(); },
           onDelete: () => {
             if (this.toolIdx >= tools.length) this.toolIdx = tools.length - 1;
-            changed("contexts");
+            syncContexts();
           },
         }),
         t ? h(VueToolDetail, {
-          tool: t, builtin: true,
-          onSave: (data) => { Object.assign(t, data); changed("contexts"); },
+          tool: t, builtin: false,
+          onSave: (data) => { Object.assign(t, data); syncContexts(); },
         }) : h("div", { style: "padding:20px;color:var(--c-text-dim)" }, "No tool selected"),
       ]);
     },
@@ -666,16 +647,13 @@ async function syncContexts(extra = {}) {
     return;
   }
 
-  // Server may have modified contexts (AI response, auto-exec tools)
   if (data?.contexts) {
     state.contexts = data.contexts;
     state.activeCtx = data.activeCtx ?? state.activeCtx;
   }
-  // Surface server-side warnings (e.g. API failure)
   if (data?.warning) {
     messageList?.addError(data.warning);
   }
-  // Always re-render after sync
   messageList?.refresh();
   initContextSwitcher();
   refreshToolsBadge();
@@ -685,34 +663,47 @@ async function syncUI() {
   try { await api("PUT", "/api/ui", state.ui); } catch {}
 }
 
-function initChangedRegistry() {
-  changed.register("configs", {
-    render: [renderConfigCompact],
-    sync: [syncConfigs],
-  });
-  changed.register("contexts", {
-    render: [
-      () => messageList?.refresh(),
-      initContextSwitcher,
-      refreshToolsBadge,
-    ],
-    sync: [syncContexts],
-  });
-  changed.register("ui", {
-    render: [initContextSwitcher],
-    sync: [syncUI],
-  });
+// ══ 状态形状观察（替换 _changedRegistry + changed()）═══════
 
-  // Vue watcher: _sync 版本号变更 → 自动调用注册的 sync 函数
-  watch(() => state._sync.configs, () => {
-    for (const fn of _changedRegistry.configs?.sync ?? []) fn();
-  });
-  watch(() => state._sync.contexts, () => {
-    for (const fn of _changedRegistry.contexts?.sync ?? []) fn();
-  });
-  watch(() => state._sync.ui, () => {
-    for (const fn of _changedRegistry.ui?.sync ?? []) fn();
-  });
+function initStateWatchers() {
+  // ── Configs：数据变化时渲染 + 同步 ───────────────
+  watch(
+    () => state.configs.map(c => `${c.model}|${c.temperature}|${c.maxTokens}|${c.autoExecute}`),
+    () => { renderConfigCompact(); if (booted) syncConfigs(); }
+  );
+
+  // ── UI 偏好变化时渲染 + 同步 ─────────────────────
+  watch(
+    () => state.ui,
+    () => { if (booted) { initContextSwitcher(); syncUI(); } },
+    { deep: true }
+  );
+
+  // ── Contexts 变化：渲染 ──────────────────────────
+  // 监听 context 数组长度 + 消息数 + 工具数
+  watch(
+    () => state.contexts.map((c, i) => `${c.messages?.length ?? 0}:${c.tools?.length ?? 0}:${i === state.activeCtx}`),
+    () => {
+      if (!booted) return;
+      messageList?.refresh();
+      initContextSwitcher();
+      refreshToolsBadge();
+    }
+  );
+
+  // ── 状态形状观察：检测"最后一条是 user 消息"→ 自动触发 SSE ──
+  watch(
+    () => {
+      if (state._freeze.contexts || _processing) return null;
+      const ctx = state.contexts[state.activeCtx];
+      return ctx?.messages?.slice(-1)[0]?.role ?? null;
+    },
+    (lastRole) => {
+      if (lastRole === "user" && booted) {
+        handleSend("");  // 空字符串触发 SSE 处理（不追加新消息）
+      }
+    }
+  );
 }
 
 // ══ Refresh ══════════════════════════════════════════════
@@ -750,8 +741,10 @@ async function boot() {
 
   document.getElementById("tools-badge").addEventListener("click", openToolsModal);
 
-  initChangedRegistry();
+  // 先初始化 watcher，再首次加载数据
+  initStateWatchers();
   await refreshAll();
+  booted = true;
 }
 
 document.addEventListener("DOMContentLoaded", boot);

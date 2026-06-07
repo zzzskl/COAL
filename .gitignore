@@ -3,6 +3,9 @@ node_modules/
 coal.log
 CLAUDE.md
 data/**/data.json
+data/**/saved.bak/
+data/**/*.tmp
 lessons.md
 test-results/
 experiment/
+.claude/
