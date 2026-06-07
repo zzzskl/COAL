@@ -6,7 +6,7 @@ function esc(s) { const d = document.createElement("div"); d.textContent = Strin
 
 // ── ContextCompact ──────────────────────────────────────────
 
-export function ContextCompact(ctx, { active, onDelete, name } = {}) {
+export function ContextCompact(ctx, { active, onDelete, name, onChange } = {}) {
   const el = document.createElement("div");
   el.className = "ctx-compact" + (active ? " active" : "");
   const msgCount = ctx.messages?.length ?? 0;
@@ -24,6 +24,35 @@ export function ContextCompact(ctx, { active, onDelete, name } = {}) {
     del.className = "ctx-compact-del"; del.textContent = "×";
     del.addEventListener("click", (e) => { e.stopPropagation(); onDelete(); });
     el.appendChild(del);
+  }
+  // Inline rename: click name → edit
+  const nameSpan = el.querySelector(".ctx-compact-name");
+  if (onChange) {
+    nameSpan.style.cursor = "pointer";
+    nameSpan.title = "Click to rename";
+    nameSpan.onclick = (e) => {
+      e.stopPropagation();
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "ctx-compact-name-input";
+      input.value = nameSpan.textContent;
+      nameSpan.replaceWith(input);
+      // No focus/select — was causing re-render
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          const val = input.value.trim() || "Unnamed";
+          if (val !== name) onChange({ name: val });
+        }
+        if (ev.key === "Escape") {
+          input.replaceWith(nameSpan);
+        }
+      });
+      input.addEventListener("blur", () => {
+        const val = input.value.trim() || "Unnamed";
+        if (val !== name) onChange({ name: val });
+      });
+    };
   }
   el.addEventListener("click", () => el.dispatchEvent(new CustomEvent("select")));
   return el;
@@ -65,12 +94,11 @@ export function ContextDetail(ctx, {
   const msgList = MessageList(msgs, {
     placeholder: "Type a message... (demo)",
     collapsedIndices,
-    onEditMessage,
-    onDeleteMessage,
-    onBranchMessage,
+    onEditMessage: onMessageEdit,
+    onDeleteMessage: onMessageDelete,
+    onBranchMessage: onMessageBranch,
     onSubmit: onMessageSubmit
       ? (content) => {
-          msgs.push({ role: "user", content });
           if (onMessageSubmit) onMessageSubmit(content);
         }
       : undefined,
@@ -87,16 +115,18 @@ export function ContextDetail(ctx, {
 
 // ── ContextList ─────────────────────────────────────────────
 
-export function ContextList(contexts, activeIndex, { onSelect, onAdd, onDelete, names } = {}) {
+export function ContextList(contexts, activeIndex, { onSelect, onAdd, onDelete, names, onChange } = {}) {
   const el = document.createElement("div");
   el.className = "ctx-list";
   render();
-  return el;
+  return { el, refresh: render };
 
   function render() {
+    const activeName = esc(names?.[activeIndex]?.name ?? `Chat ${activeIndex + 1}`);
     el.innerHTML = `
       <div class="ctx-list-header">
-        <span>Conversations (${contexts.length})</span>
+        <span>${activeName}</span>
+        <span style="font-size:11px;color:var(--c-text-dim)">${contexts.length} conversations</span>
         ${onAdd ? '<button class="cmp-btn add-btn">+ New</button>' : ''}
       </div>
       <div class="ctx-list-items"></div>
@@ -105,8 +135,9 @@ export function ContextList(contexts, activeIndex, { onSelect, onAdd, onDelete, 
     contexts.forEach((c, i) => {
       const compact = ContextCompact(c, {
         active: i === activeIndex,
-        name: names?.[i] ?? `Chat ${i + 1}`,
+        name: names?.[i]?.name ?? `Chat ${i + 1}`,
         onDelete: onDelete ? () => { contexts.splice(i, 1); render(); onDelete(i); } : undefined,
+        onChange: onChange ? (data) => onChange(i, data) : undefined,
       });
       compact.addEventListener("select", () => {
         if (onSelect) onSelect(i);

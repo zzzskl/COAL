@@ -23,47 +23,25 @@ function req(method, path, body) {
 }
 
 async function main() {
-  console.log("=== 1. Set tools (list_directory) ===");
-  await req("PUT", "/api/context/tools", {
-    tools: [
-      {
-        type: "function",
-        function: {
-          name: "list_directory",
-          description: "List all filenames in a given directory path.",
-          parameters: {
-            type: "object",
-            properties: { path: { type: "string" } },
-            required: ["path"],
-          },
-        },
-      },
-    ],
+  // Get current context
+  const initial = await req("GET", "/api/context");
+  const ctxJSON = initial.data;
+
+  // Add a user message
+  ctxJSON.messages.push({ role: "user", content: "list the contents of ./src" });
+
+  console.log("=== 1. Set tools + send message via PUT /api/contexts ===");
+
+  // PUT /api/contexts with the new context — server auto-processes
+  const putRes = await req("PUT", "/api/contexts", {
+    contexts: [ctxJSON],
+    activeCtx: 0,
   });
-  const ctx = await req("GET", "/api/context");
-  console.log("tools set:", ctx.data.tools?.length, "tool(s)");
+  console.log("PUT status:", putRes.status);
+  console.log("contexts count:", putRes.data.contexts?.length ?? 0);
+  console.log("autoExecuted:", putRes.data.autoExecuted ?? "N/A");
 
-  console.log("\n=== 2. Send message: 'list the contents of ./src' ===");
-  const chat1 = await req("POST", "/api/chat", {
-    message: "list the contents of ./src",
-    model: "deepseek-v4-flash",
-  });
-  console.log("reply:", chat1.data.reply?.slice(0, 100) || "(null)");
-  console.log("tool_calls:", chat1.data.tool_calls?.length || 0);
-
-  if (chat1.data.tool_calls?.length > 0) {
-    const tc = chat1.data.tool_calls[0];
-    console.log("  → name:", tc.function.name);
-    console.log("  → args:", tc.function.arguments);
-  }
-
-  console.log("\n=== 3. Execute pending tools ===");
-  const exec = await req("POST", "/api/context/execute");
-  console.log("executed:", exec.data.executed);
-
-  console.log("\n=== 4. Check context (tool result present) ===");
-  const ctx2 = await req("GET", "/api/context");
-  const msgs = ctx2.data.messages;
+  const msgs = putRes.data.contexts?.[0]?.messages ?? [];
   console.log("message count:", msgs.length);
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
@@ -72,17 +50,13 @@ async function main() {
         ? `[tool_calls: ${m.tool_calls.map((t) => t.function.name).join(", ")}]`
         : m.role === "tool"
         ? `[tool_result for ${m.tool_call_id}] ${(m.content || "").slice(0, 60)}`
-        : (m.content || "").slice(0, 60);
+        : (m.content || "").slice(0, 100);
     console.log(`  [${i}] ${m.role}: ${preview}`);
   }
 
-  console.log("\n=== 5. Follow-up: 'what did you find?' ===");
-  const chat2 = await req("POST", "/api/chat", {
-    message: "what did you find? summarize the directory contents",
-    model: "deepseek-v4-flash",
-  });
-  console.log("reply:", chat2.data.reply?.slice(0, 300) || "(null)");
-  console.log("tool_calls:", chat2.data.tool_calls?.length || 0);
+  console.log("\n=== 2. Execute pending (if any) ===");
+  const exec = await req("POST", "/api/context/execute");
+  console.log("executed:", exec.data.executed);
 }
 
 main().catch(console.error);

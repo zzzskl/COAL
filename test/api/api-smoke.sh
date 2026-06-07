@@ -66,31 +66,19 @@ RES=$(curl -sf -X PUT "$BASE/api/context/message/1" -H "$H" -H "$CT" \
   -d '{"content":"What is 3+3?"}')
 check "PUT /api/context/message/:index updates" "3+3" "$RES"
 
-# ── 3. Chat (without autoExecute) ─────────────────────────────────
-echo "── 3. Chat (without autoExecute) ──"
+# ── 3. UI: context name ─────────────────────────────────────────
+echo "── 3. UI: context name ──"
 
-# Reset for clean chat test
-curl -sf -X DELETE "$BASE/api/context" -H "$H" > /dev/null
-# Build a simple context
-curl -sf -X POST "$BASE/api/context/message" -H "$H" -H "$CT" \
-  -d '{"role":"user","content":"Reply with just the word: hello"}' > /dev/null
+# 3a. Set context name via /api/ui
+RES=$(curl -sf -X PUT "$BASE/api/ui" -H "$H" -H "$CT" \
+  -d '{"context":{"0":{"name":"My Chat"}}}')
+check "PUT /api/ui sets context name" '"name"' "$RES"
+check "PUT /api/ui context name value" "My Chat" "$RES"
 
-RES=$(curl -sf -X POST "$BASE/api/chat" -H "$H" -H "$CT" -d '{}')
-check "POST /api/chat returns reply" "reply" "$RES"
+# ── 4. Tools ──────────────────────────────────────────────────────
+echo "── 4. Tools ──"
 
-# ── 4. Context name ──────────────────────────────────────────────
-echo "── 4. Context name ──"
-
-# 4a. Set context name
-RES=$(curl -sf -X PUT "$BASE/api/context/name" -H "$H" -H "$CT" \
-  -d '{"name":"My Chat"}')
-check "PUT /api/context/name sets name" '"name"' "$RES"
-check "PUT /api/context/name value" "My Chat" "$RES"
-
-# ── 5. Tools ──────────────────────────────────────────────────────
-echo "── 5. Tools ──"
-
-# 5a. List built-in tools
+# 4a. List built-in tools
 RES=$(curl -sf "$BASE/api/tools")
 check "GET /api/tools returns builtin" "list_directory" "$RES"
 
@@ -99,34 +87,34 @@ RES=$(curl -sf -X PUT "$BASE/api/context/tools" -H "$H" -H "$CT" \
   -d '{"tools":[{"type":"function","function":{"name":"echo","description":"Echo back the input","parameters":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}}]}')
 check "PUT /api/context/tools sets tools" "echo" "$RES"
 
-# ── 7. UI Preferences ─────────────────────────────────────────────
-echo "── 7. UI Preferences (new) ──"
+# ── 5. UI Preferences ─────────────────────────────────────────────
+echo "── 5. UI Preferences ──"
 
-# 7a. GET default ui
+# 5a. GET default ui
 UI=$(curl -sf "$BASE/api/ui" -H "$H")
 check "GET /api/ui returns collapsed" "collapsed" "$UI"
 check "GET /api/ui returns context" '"context"' "$UI"
 
-# 7b. PUT collapsed state
+# 5b. PUT collapsed state
 UI2=$(curl -sf -X PUT "$BASE/api/ui" -H "$H" -H "$CT" \
   -d '{"collapsed":{"0":[0,2]}}')
 check "PUT /api/ui sets collapsed" '"0"' "$UI2"
 check "PUT /api/ui contains indices" '[0,2]' "$UI2"
 
-# 7c. Verify persisted
+# 5c. Verify persisted
 UI3=$(curl -sf "$BASE/api/ui" -H "$H")
 check "GET /api/ui reflects update" '[0,2]' "$UI3"
 
-# ── 8. Debug ──────────────────────────────────────────────────────
-echo "── 8. Debug ──"
+# ── 6. Debug ──────────────────────────────────────────────────────
+echo "── 6. Debug ──"
 
 RES=$(curl -sf "$BASE/api/debug" -H "$H")
 check "GET /api/debug returns sessionId" "sessionId" "$RES"
 check "GET /api/debug returns context" "context" "$RES"
 check "GET /api/debug returns config" "config" "$RES"
 
-# ── 9. Logs ───────────────────────────────────────────────────────
-echo "── 9. Logs ──"
+# ── 7. Logs ───────────────────────────────────────────────────────
+echo "── 7. Logs ──"
 
 RES=$(curl -sf "$BASE/api/logs")
 check "GET /api/logs returns entries" "entries" "$RES"

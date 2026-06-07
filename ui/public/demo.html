@@ -5,11 +5,78 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>COAL Component Demo</title>
   <link rel="stylesheet" href="/css/components.css">
+  <style>
+    /* ── Demo-specific layout (not part of component library) ── */
+    .demo-page {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--c-bg);
+      color: var(--c-text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .demo-title {
+      font-size: 20px; font-weight: 700; margin-bottom: 4px;
+    }
+    .demo-subtitle {
+      font-size: 13px; color: var(--c-text-dim); margin-bottom: 24px;
+    }
+    .demo-section {
+      margin-bottom: 32px;
+      border: 1px solid var(--c-border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .demo-section-title {
+      font-size: 14px; font-weight: 700; padding: 8px 14px;
+      background: var(--c-surface); border-bottom: 1px solid var(--c-border);
+    }
+    .demo-grid {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      min-height: 300px;
+    }
+    .demo-grid-left {
+      border-right: 1px solid var(--c-border);
+      overflow-y: auto;
+      min-width: 0;
+    }
+    .demo-grid-right {
+      padding: 14px;
+      overflow-y: auto;
+      min-width: 0;
+      min-height: 0;
+    }
+    .demo-standalone {
+      padding: 0;
+      min-height: 0;
+    }
+    .demo-panel-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      padding: 12px;
+    }
+    .demo-panel-col {
+      border: 1px solid var(--c-border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .demo-panel-col-hdr {
+      font-size: 12px; font-weight: 600;
+      padding: 6px 10px;
+      background: var(--c-surface);
+      border-bottom: 1px solid var(--c-border);
+      color: var(--c-text-dim);
+    }
+    .demo-panel-col-hdr span {
+      color: var(--c-accent);
+    }
+  </style>
 </head>
 <body class="demo-page">
 
 <h1 class="demo-title">COAL Component Library</h1>
-<p class="demo-subtitle">Config · Context · Message · ToolDef &mdash; each in Compact / Detail / List variants</p>
+<p class="demo-subtitle">Config · Context · Message · ToolDef &mdash; Panels: ContextBuilder · Executor · Logs · Tools</p>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
 <!-- CONFIG                                                      -->
@@ -42,13 +109,36 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
-<!-- TOOL                                                        -->
+<!-- NEW PANELS: ContextBuilder + Tools                          -->
 <!-- ═══════════════════════════════════════════════════════════ -->
 <div class="demo-section">
-  <div class="demo-section-title">ToolDef</div>
-  <div class="demo-grid">
-    <div class="demo-grid-left" id="tool-list-container"></div>
-    <div class="demo-grid-right" id="tool-detail-container"></div>
+  <div class="demo-section-title">Panels: ContextBuilder · Tools</div>
+  <div class="demo-panel-row">
+    <div class="demo-panel-col">
+      <div class="demo-panel-col-hdr">ContextBuilderPanel <span>inline editing</span></div>
+      <div id="ctx-panel-container"></div>
+    </div>
+    <div class="demo-panel-col">
+      <div class="demo-panel-col-hdr">ToolsPanel <span>manage tools</span></div>
+      <div id="tools-panel-container"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- NEW PANELS: Executor + Logs                                 -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="demo-section">
+  <div class="demo-section-title">Panels: Executor · Logs</div>
+  <div class="demo-panel-row">
+    <div class="demo-panel-col">
+      <div class="demo-panel-col-hdr">ExecutorPanel <span>execute pending tools</span></div>
+      <div id="exec-panel-container"></div>
+    </div>
+    <div class="demo-panel-col">
+      <div class="demo-panel-col-hdr">LogsPanel <span>auto-refresh logs viewer</span></div>
+      <div id="logs-panel-container"></div>
+    </div>
   </div>
 </div>
 
@@ -57,6 +147,10 @@ import { ConfigCompact, ConfigDetail, ConfigList } from "./js/components/config.
 import { ContextCompact, ContextDetail, ContextList } from "./js/components/context.js";
 import { MessageCompact, MessageDetail, MessageList } from "./js/components/message.js";
 import { ToolCompact, ToolDetail, ToolList } from "./js/components/tool.js";
+import { ContextBuilderPanel } from "./js/components/ctx-panel.js";
+import { ExecutorPanel } from "./js/components/exec-panel.js";
+import { LogsPanel } from "./js/components/logs-panel.js";
+import { ToolsPanel } from "./js/components/tools-panel.js";
 
 // ══ Sample Data ═════════════════════════════════════════════
 
@@ -94,7 +188,7 @@ const sampleMessages = [
 ];
 
 const tools = [
-  { type: "function", function: { name: "list_directory", description: "List all filenames (files and subdirectories) in a given directory path. Returns a JSON array of filename strings.", parameters: { type: "object", properties: { path: { type: "string", description: "Directory path to list. Supports absolute Windows paths, relative paths, and ~/ for home directory." } }, required: ["path"] } } },
+  { type: "function", function: { name: "list_directory", description: "List all filenames (files and subdirectories) in a given directory path. Returns a JSON array of filename strings.", parameters: { type: "object", properties: { path: { type: "string", description: "Directory path to list." } }, required: ["path"] } } },
   { type: "function", function: { name: "read_file", description: "Read the contents of a file", parameters: { type: "object", properties: { filepath: { type: "string" } }, required: ["filepath"] } } },
   { type: "function", function: { name: "search_code", description: "Search the codebase for a pattern", parameters: { type: "object", properties: { pattern: { type: "string" }, glob: { type: "string" } }, required: ["pattern"] } } },
 ];
@@ -150,24 +244,31 @@ function renderContextSection() {
   listCtr.innerHTML = "";
   detailCtr.innerHTML = "";
 
+  const ctxNames = { 0: { name: "Debug session" }, 1: { name: "Empty chat" } };
+
   const list = ContextList(contexts, ctxIdx, {
+    names: ctxNames,
     onSelect: (i) => { ctxIdx = i; renderContextSection(); },
-    onAdd: () => { ctxIdx = contexts.length - 1; renderContextSection(); },
+    onAdd: () => { ctxIdx = contexts.length - 1; ctxNames[ctxIdx] = { name: `Chat ${ctxIdx + 1}` }; renderContextSection(); },
     onDelete: (i) => {
       if (contexts.length <= 1) return;
       if (ctxIdx >= contexts.length) ctxIdx = contexts.length - 1;
       renderContextSection();
     },
+    onChange: (i, data) => {
+      ctxNames[i] = Object.assign(ctxNames[i] ?? {}, data);
+      renderContextSection();
+    },
   });
-  listCtr.appendChild(list);
+  listCtr.appendChild(list.el);
 
   const detail = ContextDetail(contexts[ctxIdx], {
     onNameChange: (name) => { contexts[ctxIdx].name = name; },
-    onToolClick: () => alert("Tools panel would open here. Tools: " + (contexts[ctxIdx].tools ?? []).map(t => t.function.name).join(", ")),
+    onToolClick: () => alert("Tools: " + (contexts[ctxIdx].tools ?? []).map(t => t.function.name).join(", ")),
     onMessageSubmit: (content) => {
       contexts[ctxIdx].messages.push(
         { role: "user", content },
-        { role: "assistant", content: "[demo] This is a simulated assistant reply to: \"" + content + "\". In the real app, this would be an API call." },
+        { role: "assistant", content: "[demo] Simulated reply to: \"" + content + "\"" },
       );
       ctxDetail.refreshMessages();
     },
@@ -182,7 +283,7 @@ renderContextSection();
 
 (function renderMessageStandalone() {
   const ctr = document.getElementById("msg-standalone");
-  const msgs = [...sampleMessages]; // working copy
+  const msgs = [...sampleMessages];
 
   const list = MessageList(msgs, {
     placeholder: "Type to test MessageList...",
@@ -217,7 +318,6 @@ function renderToolSection() {
   });
   listCtr.appendChild(list);
 
-  // list_directory (index 0) is the only built-in
   const detail = ToolDetail(tools[toolIdx], {
     builtin: toolIdx === 0,
     onSave: (data) => {
@@ -235,6 +335,112 @@ function renderToolSection() {
 }
 
 renderToolSection();
+
+// ══ Render: ContextBuilderPanel ═════════════════════════════
+
+(function renderCtxPanel() {
+  const ctr = document.getElementById("ctx-panel-container");
+  const ctx = contexts[0];
+
+  const panel = ContextBuilderPanel(ctx, {
+    collapsed: [],
+    name: ctx.name,
+    onChange: (extra) => {
+      // In demo mode, just log changes
+      console.log("ContextBuilderPanel onChange:", extra);
+    },
+  });
+  ctr.appendChild(panel.el);
+})();
+
+// ══ Render: ToolsPanel ═════════════════════════════════════
+
+(function renderToolsPanel() {
+  const ctr = document.getElementById("tools-panel-container");
+  const ctxTools = contexts[0].tools;
+
+  const panel = ToolsPanel(ctxTools, {
+    builtinTools: tools,
+    onChange: () => {
+      console.log("Tools changed:", ctxTools.map(t => t.function.name));
+    },
+  });
+  ctr.appendChild(panel.el);
+})();
+
+// ══ Render: ExecutorPanel ══════════════════════════════════
+
+(function renderExecPanel() {
+  const ctr = document.getElementById("exec-panel-container");
+
+  const panel = ExecutorPanel({
+    onExecute: async () => {
+      // Demo: simulate executor API
+      await new Promise(r => setTimeout(r, 800));
+      return { executed: ["list_directory", "read_file"] };
+    },
+  });
+  ctr.appendChild(panel.el);
+})();
+
+// ══ Render: LogsPanel ══════════════════════════════════════
+
+(function renderLogsPanel() {
+  const ctr = document.getElementById("logs-panel-container");
+
+  // Demo: generate mock log entries
+  const mockEntries = [];
+
+  function addLog(level, message, tag) {
+    const now = new Date();
+    mockEntries.push({
+      time: now.toISOString(),
+      level,
+      message,
+      tag,
+    });
+  }
+
+  // Seed some logs
+  const msgs = [
+    ["info", "Server started on port 3000"],
+    ["info", "Model: deepseek-v4-flash", "chat"],
+    ["info", "User message: 列出文件", "chat"],
+    ["info", "Assistant reply (82 tokens)", "chat"],
+    ["info", "Auto-executed 2 tool(s)", "chat"],
+  ];
+  for (const [level, msg, tag] of msgs) addLog(level, msg, tag);
+
+  // Keep adding logs every 5s to show auto-refresh
+  setInterval(() => {
+    const labels = [
+      ["info", "System health check OK"],
+      ["info", "Processing message...", "chat"],
+      ["info", "Model reply (64 tokens)", "chat"],
+      ["warn", "Rate limit approaching"],
+      ["info", "Tool execution complete", "chat"],
+    ];
+    const [level, msg, tag] = labels[Math.floor(Math.random() * labels.length)];
+    addLog(level, msg, tag);
+  }, 5000);
+
+  const panel = LogsPanel({
+    fetchLogs: async () => ({ entries: [...mockEntries] }),
+    deleteLogs: async () => { mockEntries.length = 0; },
+    fetchSnapshot: async () => ({
+      at: new Date().toISOString(),
+      sessionId: crypto.randomUUID(),
+      context: {
+        messages: contexts[0].messages.slice(-3),
+        tools: contexts[0].tools,
+      },
+      config: configs[0],
+      recentLogs: [...mockEntries],
+    }),
+  });
+  ctr.appendChild(panel.el);
+})();
+
 </script>
 
 </body>

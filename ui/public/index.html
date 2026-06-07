@@ -6,6 +6,13 @@
   <title>COAL Chat</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/css/components.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js"
+    }
+  }
+  </script>
 </head>
 <body>
   <div id="app">
@@ -42,17 +49,13 @@
 
       <div class="topbar-sep"></div>
 
-      <!-- Sidebar sections: buttons open sidebar with specific section -->
+      <!-- Panel buttons: open modals for each panel -->
       <button id="exec-btn" class="topbar-icon-btn" title="Executor">▶</button>
       <button id="logs-btn" class="topbar-icon-btn" title="Logs">📋</button>
       <button id="ctx-builder-btn" class="topbar-icon-btn" title="Context Builder">✎</button>
-      <button id="sidebar-toggle" class="topbar-icon-btn" title="Toggle sidebar">☰</button>
     </header>
 
     <div class="app-body">
-    <!-- ═══ Sidebar inserted here by Sidebar component ════ -->
-    <div id="sidebar-overlay"></div>
-
     <!-- ═══ Main: MessageList ═══════════════════════════════ -->
     <main id="chat-main">
       <!-- MessageList rendered here by main.js -->

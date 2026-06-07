@@ -15,7 +15,6 @@
   --clr-input-bg: #1a1a2e;
   --clr-hover: #1a5080;
   --clr-gold: #daa520;
-  --sidebar-width: 220px;
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 12px;
@@ -28,7 +27,6 @@
   --radius-lg: 8px;
   --ease: 250ms ease;
   --ease-fast: 150ms ease;
-  --z-sidebar: 100;
   --z-overlay: 99;
   --z-hamburger: 110;
 }
@@ -137,38 +135,6 @@ body {
   flex: 1;
   min-height: 0;
   position: relative;
-}
-
-/* ═══ Sidebar (slide in from left on mobile/tablet) ═══════ */
-#sidebar {
-  position: fixed;
-  top: 42px;
-  left: 0;
-  width: var(--sidebar-width);
-  height: calc(100vh - 42px);
-  background: var(--clr-sidebar);
-  padding: var(--space-md) var(--space-md) var(--space-xl);
-  overflow-y: auto;
-  border-right: 1px solid var(--clr-border);
-  transform: translateX(-100%);
-  transition: transform var(--ease);
-  z-index: var(--z-sidebar);
-}
-
-body.sidebar-open #sidebar {
-  transform: translateX(0);
-}
-
-#sidebar-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.5);
-  z-index: var(--z-overlay);
-  display: none;
-}
-
-body.sidebar-open #sidebar-overlay {
-  display: block;
 }
 
 /* ═══ Modal overlay ═══════════════════════════════════════ */
@@ -306,7 +272,7 @@ body.sidebar-open #sidebar-overlay {
   border-top: 1px solid var(--clr-border);
 }
 
-/* Tools list in sidebar — compact component style */
+/* Tools list — compact component style */
 .tools-section-label {
   font-size: 11px;
   font-weight: 600;
@@ -426,38 +392,6 @@ body.sidebar-open #sidebar-overlay {
 
 #tools-list .tool-params-input { resize: vertical; font-size: 10px; }
 
-/* Context list in sidebar */
-#ctx-list .ctx-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 4px 6px;
-  font-size: 11px;
-  border-bottom: 1px solid rgba(15,52,96,0.5);
-}
-
-#ctx-list .ctx-item:last-child { border-bottom: none; }
-
-#ctx-list .ctx-item-role {
-  font-size: 9px; font-weight: 700; text-transform: uppercase;
-  padding: 0 4px; border-radius: 2px; flex-shrink: 0; margin-top: 1px;
-}
-#ctx-list .ctx-item-role.system    { background: #2a2818; color: #9a8c5c; }
-#ctx-list .ctx-item-role.user      { background: #1a2a40; color: #4a9eff; }
-#ctx-list .ctx-item-role.assistant { background: #162530; color: #53a8b6; }
-#ctx-list .ctx-item-role.tool      { background: #1e1628; color: #7a5c9a; }
-
-#ctx-list .ctx-item-preview {
-  flex: 1; color: var(--clr-text-dim);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
-}
-
-#ctx-list .ctx-edit-btn, #ctx-list .ctx-del-btn {
-  background: none; border: none; cursor: pointer; font-size: 12px;
-  padding: 0 2px; color: var(--clr-text-dim); flex-shrink: 0;
-}
-#ctx-list .ctx-edit-btn:hover { color: var(--c-accent); }
-#ctx-list .ctx-del-btn:hover { color: var(--c-danger); }
 
 /* Context edit form (inline) */
 .ctx-edit-form {
@@ -476,17 +410,11 @@ body.sidebar-open #sidebar-overlay {
   display: flex; gap: 4px; justify-content: flex-end;
 }
 
-/* Executor result */
-#exec-result { margin-top: 8px; font-size: 12px; }
 .exec-msg { padding: 4px 8px; border-radius: 4px; }
 .exec-ok { background: #0a2a1a; color: #4caf50; }
 .exec-err { background: #2a0a0a; color: #e94560; }
 
-/* Logs entries */
-#logs-list {
-  font-family: var(--ff-mono, "JetBrains Mono", "Fira Code", monospace);
-  font-size: 10px; line-height: 1.6; max-height: 400px; overflow-y: auto;
-}
+/* Logs entries — styles moved to components.css */
 
 .log-entry {
   padding: 2px 4px; border-bottom: 1px solid rgba(15,52,96,0.3);
@@ -509,20 +437,6 @@ body.sidebar-open #sidebar-overlay {
   border-left: 2px solid var(--c-accent);
   padding: 2px 6px !important;
 }
-#ctx-load-btn:hover {
-  background: #1a5080;
-}
-
-#ctx-del-file-btn:hover {
-  background: #e94560;
-  color: #fff;
-}
-
-/* Context Builder */
-#ctx-list {
-  margin-bottom: 12px;
-}
-
 .ctx-item {
   display: flex;
   align-items: center;
@@ -765,15 +679,6 @@ body.sidebar-open #sidebar-overlay {
   color: #daa520;
   margin-bottom: 4px;
   font-family: monospace;
-}
-
-/* Log viewer */
-#logs-list {
-  max-height: 200px;
-  overflow-y: auto;
-  font-family: "JetBrains Mono", "Fira Code", monospace;
-  font-size: 10px;
-  line-height: 1.4;
 }
 
 .log-entry {
@@ -1139,10 +1044,6 @@ body.sidebar-open #sidebar-overlay {
    Responsive: Mobile (< 768px)
    ======================================== */
 @media (max-width: 767px) {
-  #sidebar {
-    width: 220px;
-  }
-
   #scroll-bottom-btn {
     bottom: 100px;
     right: 12px;
@@ -1154,4 +1055,3 @@ body.sidebar-open #sidebar-overlay {
   }
 }
 
-/* Sidebar is always slide-in (all screen sizes) */

@@ -4,7 +4,7 @@ import { resolve, dirname } from "node:path";
 import { Model } from "../src/model/index.js";
 import { Context } from "../src/context/index.js";
 import type { ToolDef, ToolChoice } from "../src/context/index.js";
-import type { User, Config } from "../src/types/index.js";
+import type { User, Config, StreamEvent } from "../src/types/index.js";
 import { logger } from "../src/logger/index.js";
 import { executePendingTools } from "../src/executor/index.js";
 import { registry, getBuiltinToolDefs } from "../src/tools/index.js";
@@ -22,8 +22,9 @@ app.use((req, _res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 app.use(express.static("ui/public"));
+app.use("/test", express.static("test/ui"));
 
 // ══ Helpers ══════════════════════════════════════════════════
 
@@ -43,6 +44,23 @@ function atomicWrite(filePath: string, data: string) {
   ensureDir(dirname(filePath));
   writeFileSync(tmp, data, "utf-8");
   renameSync(tmp, filePath);
+}
+
+function buildModel(ctx: Context, cfg?: Config): Model {
+  const m = new Model().context(ctx);
+  if (cfg) {
+    if (cfg.model) m.model(cfg.model);
+    if (cfg.temperature !== undefined) m.temperature(cfg.temperature);
+    if (cfg.maxTokens !== undefined) m.maxTokens(cfg.maxTokens);
+    if (cfg.topP !== undefined) m.topP(cfg.topP);
+    if (cfg.stop) m.stop(cfg.stop);
+    if (cfg.thinking === "disabled") {
+      m.noThinking();
+    } else if (cfg.thinking && typeof cfg.thinking === "object" && "effort" in cfg.thinking) {
+      m.thinking((cfg.thinking as { effort: "high" | "max" }).effort);
+    }
+  }
+  return m;
 }
 
 // ══ User I/O ════════════════════════════════════════════════
@@ -161,30 +179,178 @@ app.get("/api/contexts", resolveUser, (req, res) => {
   });
 });
 
-app.put("/api/contexts", resolveUser, (req, res) => {
+app.put("/api/contexts", resolveUser, async (req, res) => {
   const entry = (req as any).user as UserEntry;
-  const { contexts, activeCtx } = req.body as { contexts: any[]; activeCtx: number };
-  entry.userData.contexts = contexts;
-  entry.userData.activeCtx = activeCtx;
-  // Rebuild runtime Context instances from pure data
-  entry.contexts = contexts.map((c: any) => Context.fromJSON(c));
-  writeUserData((req as any).userName, entry.userData, entry.contexts);
+  const userName: string = (req as any).userName;
+  const body = req.body as { contexts: any[]; activeCtx: number; regenerate?: boolean };
+  entry.userData.contexts = body.contexts;
+  entry.userData.activeCtx = body.activeCtx;
+  entry.contexts = body.contexts.map((c: any) => Context.fromJSON(c));
+
+  let autoExecuted = 0;
+  const ctx = entry.contexts[body.activeCtx];
+  const msgs = ctx.messages;
+  const lastMsg = msgs[msgs.length - 1];
+
+  // Auto-process: if last message is from user, or regenerate flag is set
+  if (lastMsg?.role === "user" || body.regenerate) {
+    try {
+      const cfg = entry.userData.configs[entry.userData.activeCfg];
+      const model = buildModel(ctx, cfg);
+      logger.interaction(`auto-process: ctx has ${ctx.messages.length} messages`);
+      const result = await model.ask(undefined);
+      logger.interaction(`auto-process: reply received`, {
+        contentLen: result.content?.length ?? 0,
+        hasToolCalls: (result.tool_calls?.length ?? 0) > 0,
+      });
+      if (cfg?.autoExecute && result.tool_calls?.length) {
+        for (let round = 0; round < 10; round++) {
+          const executed = executePendingTools(ctx, registry as any);
+          if (executed.length === 0) break;
+          autoExecuted += executed.length;
+          logger.interaction(`auto-exec round ${round + 1}: ${executed.length} tool(s)`);
+          const r = await model.ask(undefined);
+          if (!r.tool_calls?.length) break;
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`auto-process: ${msg}`);
+      // Persist user's message even if AI failed
+      writeUserData(userName, entry.userData, entry.contexts);
+      res.json({
+        contexts: entry.contexts.map(c => c.toJSON()),
+        activeCtx: entry.userData.activeCtx,
+        warning: `AI 处理失败: ${msg}`,
+      });
+      return;
+    }
+  }
+
+  writeUserData(userName, entry.userData, entry.contexts);
   res.json({
     contexts: entry.contexts.map(c => c.toJSON()),
     activeCtx: entry.userData.activeCtx,
+    autoExecuted: autoExecuted > 0 ? autoExecuted : undefined,
   });
 });
 
-// ══ Context Name API ═══════════════════════════════════════
+// ══ SSE Streaming: 异步 AI 处理，逐 token 推送给客户端 ════════════
 
-app.put("/api/context/name", resolveUser, (req, res) => {
+app.post("/api/contexts/process", resolveUser, async (req, res) => {
   const entry = (req as any).user as UserEntry;
-  const { name } = req.body as { name?: string };
-  const idx = entry.userData.activeCtx;
-  if (!entry.userData.ui.context) entry.userData.ui.context = {};
-  entry.userData.ui.context[idx] = { name: name ?? `Chat ${idx + 1}` };
-  writeUserData((req as any).userName, entry.userData, entry.contexts);
-  res.json({ name: entry.userData.ui.context[idx].name });
+  const userName: string = (req as any).userName;
+  const body = req.body as { contexts: any[]; activeCtx: number; regenerate?: boolean };
+
+  // 1. 保存传入的 context 状态
+  entry.userData.contexts = body.contexts;
+  entry.userData.activeCtx = body.activeCtx;
+  entry.contexts = body.contexts.map((c: any) => Context.fromJSON(c));
+
+  const ctx = entry.contexts[body.activeCtx];
+  const msgs = ctx.messages;
+  const lastMsg = msgs[msgs.length - 1];
+
+  // 2. 设置 SSE 响应头
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  let autoExecuted = 0;
+
+  // 3. 判断是否需要 AI 处理
+  if (lastMsg?.role !== "user" && !body.regenerate) {
+    // 无需处理，直接返回 done
+    writeUserData(userName, entry.userData, entry.contexts);
+    res.write(`event: done\ndata: ${JSON.stringify({
+      contexts: entry.contexts.map(c => c.toJSON()),
+      activeCtx: entry.userData.activeCtx,
+    })}\n\n`);
+    res.end();
+    return;
+  }
+
+  // 4. AI 处理 + 工具执行循环
+  try {
+    const cfg = entry.userData.configs[entry.userData.activeCfg];
+    const model = buildModel(ctx, cfg);
+
+    for (let round = 0; round < 10; round++) {
+      logger.interaction(`/api/contexts/process round ${round}`);
+      res.write(`event: status\ndata: ${JSON.stringify({ status: "thinking", round })}\n\n`);
+
+      let hasToolCalls = false;
+
+      // 消费 askStream() 的 AsyncGenerator，边读边写 SSE
+      const stream = model.askStream();
+      for await (const ev of stream) {
+        switch (ev.type) {
+          case "token":
+            res.write(`event: token\ndata: ${JSON.stringify({ token: ev.token })}\n\n`);
+            break;
+          case "done":
+            if (ev.toolCalls?.length) {
+              hasToolCalls = true;
+              // 发出 tool_call 事件
+              for (const tc of ev.toolCalls) {
+                res.write(`event: tool_call\ndata: ${JSON.stringify({
+                  id: tc.id,
+                  name: tc.function.name,
+                  arguments: tc.function.arguments,
+                })}\n\n`);
+              }
+              // 执行工具
+              const executed = executePendingTools(ctx, registry as any);
+              autoExecuted += executed.length;
+              logger.interaction(`round ${round}: executed ${executed.length} tool(s)`);
+              // 发出 tool_result 事件
+              for (const tc of ev.toolCalls) {
+                const toolMsg = [...ctx.messages].reverse().find(
+                  (m: any) => m.role === "tool" && m.tool_call_id === tc.id
+                );
+                if (toolMsg) {
+                  res.write(`event: tool_result\ndata: ${JSON.stringify({
+                    id: tc.id,
+                    result: (toolMsg as any).content,
+                  })}\n\n`);
+                }
+              }
+            }
+            break;
+          case "error":
+            res.write(`event: error\ndata: ${JSON.stringify({ message: ev.message })}\n\n`);
+            writeUserData(userName, entry.userData, entry.contexts);
+            res.end();
+            return;
+        }
+      }
+
+      if (!hasToolCalls) {
+        logger.interaction(`round ${round}: no more tool_calls, breaking loop`);
+        break;
+      }
+      logger.interaction(`round ${round}: has tool_calls, continuing to next round (ctx has ${ctx.messages.length} msgs)`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error(`/api/contexts/process error: ${msg}`);
+    writeUserData(userName, entry.userData, entry.contexts);
+    res.write(`event: error\ndata: ${JSON.stringify({ message: `AI 处理失败: ${msg}` })}\n\n`);
+    res.end();
+    return;
+  }
+
+  // 5. 保存最终状态并发送 done 事件
+  writeUserData(userName, entry.userData, entry.contexts);
+  res.write(`event: done\ndata: ${JSON.stringify({
+    contexts: entry.contexts.map(c => c.toJSON()),
+    activeCtx: entry.userData.activeCtx,
+    autoExecuted: autoExecuted > 0 ? autoExecuted : undefined,
+  })}\n\n`);
+  res.end();
 });
 
 // ══ UI Preferences API ══════════════════════════════════════
@@ -202,92 +368,6 @@ app.put("/api/ui", resolveUser, (req, res) => {
   if (ctxNames !== undefined) entry.userData.ui.context = ctxNames;
   writeUserData((req as any).userName, entry.userData, entry.contexts);
   res.json(entry.userData.ui);
-});
-
-// ══ Chat ════════════════════════════════════════════════════
-
-app.post("/api/chat", resolveUser, async (req, res) => {
-  try {
-    const entry = (req as any).user as UserEntry;
-    const userName: string = (req as any).userName;
-    const { message, autoExecute: reqAutoExecute } = req.body as {
-      message?: string;
-      autoExecute?: boolean;
-    };
-
-    const cfg = entry.userData.configs[entry.userData.activeCfg];
-    const ctx = entry.contexts[entry.userData.activeCtx];
-    const autoExecute = reqAutoExecute ?? cfg?.autoExecute ?? false;
-
-    const { model, temperature, maxTokens, topP, thinking, stop, tools, toolChoice } = req.body as any;
-
-    if (model !== undefined && cfg) cfg.model = model;
-    if (temperature !== undefined && cfg) cfg.temperature = temperature;
-    if (maxTokens !== undefined && cfg) cfg.maxTokens = maxTokens;
-    if (topP !== undefined && cfg) cfg.topP = topP;
-    if (thinking !== undefined && cfg) cfg.thinking = thinking;
-    if (stop !== undefined && cfg) cfg.stop = stop;
-    if (tools !== undefined) ctx.setTools(tools);
-    if (toolChoice !== undefined) ctx.setToolChoice(toolChoice);
-
-    logger.interaction(`chat: ctx has ${ctx.messages.length} messages before ask`);
-
-    function makeModel() {
-      const m = new Model().context(ctx);
-      if (cfg) {
-        if (cfg.model) m.model(cfg.model);
-        if (cfg.temperature !== undefined) m.temperature(cfg.temperature);
-        if (cfg.maxTokens !== undefined) m.maxTokens(cfg.maxTokens);
-        if (cfg.topP !== undefined) m.topP(cfg.topP);
-        if (cfg.stop) m.stop(cfg.stop);
-        if (cfg.thinking === "disabled") {
-          m.noThinking();
-        } else if (cfg.thinking && typeof cfg.thinking === "object" && "effort" in cfg.thinking) {
-          m.thinking((cfg.thinking as { effort: "high" | "max" }).effort);
-        }
-      }
-      return m;
-    }
-
-    let currentResult = await makeModel().ask(message);
-
-    logger.interaction(`chat: reply received`, {
-      contentLen: currentResult.content?.length ?? 0,
-      hasToolCalls: (currentResult.tool_calls?.length ?? 0) > 0,
-      ctxSize: ctx.messages.length,
-    });
-
-    let totalExecuted = 0;
-    if (autoExecute && currentResult.tool_calls?.length) {
-      const MAX_ROUNDS = 10;
-      for (let round = 0; round < MAX_ROUNDS; round++) {
-        const executed = executePendingTools(ctx, registry as any);
-        if (executed.length === 0) break;
-        totalExecuted += executed.length;
-        logger.interaction(`auto-exec round ${round + 1}: ${executed.length} tool(s)`, {
-          executed,
-          ctxSize: ctx.messages.length,
-        });
-
-        currentResult = await makeModel().ask();
-        if (!currentResult.tool_calls?.length) break;
-      }
-      if (totalExecuted > 0) {
-        logger.interaction(`auto-exec done: ${totalExecuted} total tool(s) executed`);
-      }
-    }
-
-    writeUserData(userName, entry.userData, entry.contexts);
-
-    res.json({
-      reply: currentResult.content,
-      tool_calls: currentResult.tool_calls,
-      autoExecuted: totalExecuted > 0 ? totalExecuted : undefined,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: msg });
-  }
 });
 
 // ══ Backward-compat: Config (single) ════════════════════════
@@ -578,7 +658,7 @@ function migrateAllUsers() {
 
 migrateAllUsers();
 
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || "3000", 10);
 app.listen(PORT, () => {
   console.log(`COAL UI running at http://localhost:${PORT}`);
 });

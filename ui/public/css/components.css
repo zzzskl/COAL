@@ -150,6 +150,16 @@
 .ctx-compact:hover { border-color: var(--c-border); }
 .ctx-compact.active { border-color: var(--c-accent); background: rgba(83,168,182,0.08); }
 .ctx-compact-name { font-weight: 600; }
+.ctx-compact-name-input {
+  background: var(--c-bg);
+  border: 1px solid var(--c-accent);
+  border-radius: 3px;
+  color: var(--c-text);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 4px;
+  outline: none;
+}
 .ctx-compact-meta { font-size: 11px; color: var(--c-text-dim); display: flex; gap: 6px; margin-left: auto; }
 .ctx-compact-del {
   background: none; border: none; color: var(--c-text-dim);
@@ -607,6 +617,44 @@
 .tool-list-items { display: flex; flex-direction: column; }
 
 /* ============================================================
+   MESSAGE EDIT MODAL
+   ============================================================ */
+.msg-edit-modal {
+  padding: 20px;
+  min-width: 500px;
+}
+.msg-edit-field {
+  margin-bottom: 12px;
+}
+.msg-edit-field label {
+  display: block;
+  font-size: 12px; font-weight: 600;
+  color: var(--c-text-dim); margin-bottom: 4px;
+}
+.msg-edit-field textarea,
+.msg-edit-field select,
+.msg-edit-field input {
+  width: 100%;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  color: var(--c-text);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.msg-edit-field textarea {
+  min-height: 200px;
+  resize: vertical;
+}
+.msg-edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* ============================================================
    DEMO PAGE LAYOUT
    ============================================================ */
 .demo-page {
@@ -654,4 +702,109 @@
 }
 .tool-detail-wrapper {
   max-width: 560px;
+}
+
+/* ============================================================
+   PANEL COMPONENTS (ctx-panel, exec-panel, logs-panel, tools-panel)
+   ============================================================ */
+
+/* ── ExecutorPanel ───────────────────────────────────────── */
+.exec-panel {
+  padding: 12px;
+}
+.exec-result {
+  margin-top: 8px; font-size: 12px;
+}
+.exec-msg { padding: 4px 8px; border-radius: 4px; }
+.exec-ok { background: #0a2a1a; color: #4caf50; }
+.exec-err { background: #2a0a0a; color: #e94560; }
+
+/* ── LogsPanel ───────────────────────────────────────────── */
+.logs-panel {
+  padding: 8px;
+}
+.logs-toolbar {
+  display: flex; gap: 4px; align-items: center;
+  margin-bottom: 8px;
+}
+.logs-list {
+  font-family: var(--ff-mono, "JetBrains Mono", "Fira Code", monospace);
+  font-size: 10px; line-height: 1.6; max-height: 400px; overflow-y: auto;
+}
+.log-entry {
+  padding: 2px 4px; border-bottom: 1px solid rgba(15,52,96,0.3);
+  color: var(--c-text-dim);
+}
+.log-section-hdr {
+  font-size: 11px; font-weight: 600;
+  color: var(--c-accent); padding: 6px 4px 3px;
+  border-bottom: 1px solid var(--c-border);
+  margin-top: 4px;
+}
+.log-interaction {
+  color: var(--c-text);
+  background: rgba(100, 200, 255, 0.04);
+  border-left: 2px solid var(--c-accent);
+  padding: 2px 6px !important;
+}
+
+/* ── Logs: snapshot ── */
+#snapshot-container {
+  border: 1px solid var(--c-accent);
+  border-radius: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.snap-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-accent-dim);
+  font-size: 11px;
+}
+.snap-title { font-weight: 600; color: var(--c-accent); flex: 1; }
+.snap-session { color: var(--c-text-dim); font-size: 10px; }
+.snap-copy-btn {
+  background: none; border: 1px solid var(--c-border);
+  color: var(--c-text-dim); padding: 2px 8px; border-radius: 3px;
+  cursor: pointer; font-size: 11px;
+}
+.snap-copy-btn:hover { color: var(--c-accent); border-color: var(--c-accent); }
+.snap-close-btn {
+  background: none; border: none; color: var(--c-text-dim);
+  cursor: pointer; font-size: 16px; line-height: 1;
+}
+.snap-close-btn:hover { color: var(--c-danger); }
+.snap-body {
+  padding: 8px;
+  font-size: 11px;
+  max-height: 400px; overflow-y: auto;
+}
+.snap-section-hdr {
+  cursor: pointer; padding: 4px 6px;
+  font-weight: 600; color: var(--c-accent);
+  border-radius: 3px; user-select: none;
+}
+.snap-section-hdr:hover { background: rgba(83,168,182,0.08); }
+.snap-section-body { padding: 4px 0 8px 12px; }
+.snap-subtitle {
+  font-size: 10px; font-weight: 600; color: var(--c-text-dim);
+  margin: 4px 0 2px;
+}
+.snap-line { padding: 1px 0; }
+.snap-idx {
+  display: inline-block; width: 20px; text-align: right;
+  color: var(--c-text-dim); margin-right: 6px;
+}
+.snap-log-error { color: var(--c-danger); }
+.snap-log-warn { color: var(--c-warn); }
+
+/* ── ContextBuilderPanel ─────────────────────────────────── */
+.ctx-panel {
+  padding: 8px;
+}
+
+/* ── ToolsPanel ──────────────────────────────────────────── */
+.tools-panel {
+  /* grid layout set inline */
 }

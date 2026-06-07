@@ -80,8 +80,11 @@ export function MessageDetail(msg, { index, collapsed, onEdit, onDelete, onBranc
     const editBtn = el.querySelector(".msg-detail-action-btn.edit");
     editBtn?.addEventListener("click", (e) => {
       e.stopPropagation();
-      const data = msg;
-      enterEditMode(el, msg, index, onEdit);
+      const modal = MessageEditModal(msg, {
+        onSave: (data) => onEdit(index, data),
+        onCancel: () => onEdit(index, null),
+      });
+      modal.open();
     });
 
     el.querySelector(".msg-detail-action-btn.delete")?.addEventListener("click", (e) => {
@@ -96,36 +99,52 @@ export function MessageDetail(msg, { index, collapsed, onEdit, onDelete, onBranc
   }
 }
 
-// ── Inline edit mode ───────────────────────────────────────
+// ── Message Edit Modal ────────────────────────────────────────
 
-function enterEditMode(el, msg, index, onEdit) {
+export function MessageEditModal(msg, opts = {}) {
+  const { onSave, onCancel } = opts;
+
+  const el = document.createElement("div");
+  el.className = "msg-edit-modal";
+
   const isTool = msg.role === "tool";
   const isAsst = msg.role === "assistant";
   const toolCallId = msg.tool_call_id ?? "";
   const tcJson = msg.tool_calls?.length ? JSON.stringify(msg.tool_calls, null, 2) : "";
 
   el.innerHTML = `
-    <div class="msg-detail-edit-form">
+    <div class="msg-edit-field">
+      <label>Role</label>
       <select class="medit-role">
         <option value="system" ${msg.role==="system"?"selected":""}>system</option>
         <option value="user" ${msg.role==="user"?"selected":""}>user</option>
         <option value="assistant" ${msg.role==="assistant"?"selected":""}>assistant</option>
         <option value="tool" ${msg.role==="tool"?"selected":""}>tool</option>
       </select>
-      <input type="text" class="medit-tool-call-id" placeholder="tool_call_id" value="${esc(toolCallId)}" style="display:${isTool?"":"none"}">
-      <textarea class="medit-tool-calls" placeholder="tool_calls JSON" rows="4" style="display:${isAsst?"":"none"}">${esc(tcJson)}</textarea>
-      <textarea class="medit-content" rows="4">${esc(msg.content ?? "")}</textarea>
-      <div class="medit-actions">
-        <button class="cmp-btn primary medit-save">Save</button>
-        <button class="cmp-btn medit-cancel">Cancel</button>
-      </div>
-    </div>`;
+    </div>
+    <div class="msg-edit-field" id="medit-tcid-field" style="display:${isTool?"":"none"}">
+      <label>tool_call_id</label>
+      <input type="text" class="medit-tool-call-id" placeholder="tool_call_id" value="${esc(toolCallId)}">
+    </div>
+    <div class="msg-edit-field" id="medit-tc-field" style="display:${isAsst?"":"none"}">
+      <label>tool_calls (JSON)</label>
+      <textarea class="medit-tool-calls" rows="4" placeholder='[{"id":"call_01","type":"function","function":{"name":"...","arguments":"{...}"}}]'>${esc(tcJson)}</textarea>
+    </div>
+    <div class="msg-edit-field">
+      <label>Content</label>
+      <textarea class="medit-content" rows="8">${esc(msg.content ?? "")}</textarea>
+    </div>
+    <div class="msg-edit-actions">
+      <button class="cmp-btn primary medit-save">Save</button>
+      <button class="cmp-btn medit-cancel">Cancel</button>
+    </div>
+  `;
 
   // Role change → toggle conditional fields
   el.querySelector(".medit-role").addEventListener("change", (e) => {
     const r = e.target.value;
-    el.querySelector(".medit-tool-call-id").style.display = r === "tool" ? "" : "none";
-    el.querySelector(".medit-tool-calls").style.display = r === "assistant" ? "" : "none";
+    el.querySelector("#medit-tcid-field").style.display = r === "tool" ? "" : "none";
+    el.querySelector("#medit-tc-field").style.display = r === "assistant" ? "" : "none";
   });
 
   el.querySelector(".medit-save").addEventListener("click", () => {
@@ -136,13 +155,32 @@ function enterEditMode(el, msg, index, onEdit) {
     const data = { role, content: content || null };
     if (role === "tool" && tcid) data.tool_call_id = tcid;
     if (role === "assistant" && tcRaw) { try { data.tool_calls = JSON.parse(tcRaw); } catch {} }
-    onEdit(index, data);
+    close();
+    if (onSave) onSave(data);
   });
 
   el.querySelector(".medit-cancel").addEventListener("click", () => {
-    // Re-render by calling onEdit without changes — caller refreshes
-    onEdit(index, null);
+    close();
+    if (onCancel) onCancel();
   });
+
+  function open() {
+    const overlay = document.getElementById("modal-overlay");
+    const body = document.getElementById("modal-body");
+    body.innerHTML = "";
+    body.appendChild(el);
+    overlay.classList.add("visible");
+    const closeHandler = (e) => {
+      if (e.target === overlay) { overlay.classList.remove("visible"); overlay.removeEventListener("click", closeHandler); }
+    };
+    overlay.addEventListener("click", closeHandler);
+  }
+
+  function close() {
+    document.getElementById("modal-overlay")?.classList.remove("visible");
+  }
+
+  return { open, close };
 }
 
 // ── Loading indicator ────────────────────────────────────────
@@ -167,6 +205,19 @@ function makeErrorEl(msg) {
   el.innerHTML = `
     <span class="msg-detail-role" style="color:var(--c-danger)">error</span>
     <div class="msg-detail-content" style="color:var(--c-danger)">${esc(msg)}</div>
+  `;
+  return el;
+}
+
+// Streaming text element (used during SSE token streaming)
+function makeStreamingEl() {
+  const el = document.createElement("div");
+  el.className = "msg-detail assistant";
+  el.id = "msg-streaming";
+  el.style.display = "none";
+  el.innerHTML = `
+    <span class="msg-detail-role">assistant</span>
+    <div class="msg-detail-content"><span class="streaming-text"></span></div>
   `;
   return el;
 }
@@ -213,6 +264,10 @@ export function MessageList(getMessages, { placeholder, onSubmit, onClear, colla
   const loadingEl = makeLoadingEl();
   scrollArea.appendChild(loadingEl);
 
+  // Streaming text (hidden by default, shown during SSE token streaming)
+  const streamingEl = makeStreamingEl();
+  scrollArea.appendChild(streamingEl);
+
   const inputRow = document.createElement("div");
   inputRow.className = "msg-list-input-row";
   inputRow.innerHTML = `
@@ -231,7 +286,7 @@ export function MessageList(getMessages, { placeholder, onSubmit, onClear, colla
     const toRemove = scrollArea.querySelectorAll(".msg-list-error, .msg-list-empty");
     for (const r of toRemove) r.remove();
 
-    const existingMsgs = scrollArea.querySelectorAll(".msg-detail:not(#msg-loading)");
+    const existingMsgs = scrollArea.querySelectorAll(".msg-detail:not(#msg-loading):not(#msg-streaming)");
     for (const m of existingMsgs) m.remove();
 
     // Re-render all messages
@@ -296,5 +351,17 @@ export function MessageList(getMessages, { placeholder, onSubmit, onClear, colla
     if (sendBtn) sendBtn.disabled = !on;
   }
 
-  return { el, refresh: renderMessages, setLoading, addError, setEnabled };
+  function setStreamingText(text) {
+    const contentEl = streamingEl.querySelector(".streaming-text");
+    if (text === null || text === undefined) {
+      streamingEl.style.display = "none";
+      if (contentEl) contentEl.innerHTML = "";
+    } else {
+      streamingEl.style.display = "";
+      if (contentEl) contentEl.innerHTML = formatContent(text);
+    }
+    scrollArea.scrollTop = scrollArea.scrollHeight;
+  }
+
+  return { el, refresh: renderMessages, setLoading, addError, setEnabled, setStreamingText };
 }
